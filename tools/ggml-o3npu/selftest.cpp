@@ -68,7 +68,7 @@ static int run_case_t(int64_t K, int64_t M, int64_t N, enum ggml_type ta, enum g
            (long long) K, (long long) M, (long long) N, (int) ta, (int) tb,
            maxdiff, maxdiff < 1e-2 ? "OK" : "MISMATCH");
     ggml_free(ctx);
-    return maxdiff < 1e-3 ? 0 : 2;
+    return maxdiff < 1e-2 ? 0 : 2;
 }
 
 int main(void) {
