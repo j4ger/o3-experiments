@@ -269,3 +269,31 @@ O3NPU offload: The capital of France is eleven trousers trousers
 3. **设备**：把 matmul 的标量循环换成 `xnnlMatmulCreateGraph` + mida 执行，验证数值；
 4. **设备**：性能与稳定性。
 
+
+
+---
+
+## NPU 路径的离线进展（未完成）
+
+目标是把 `o3npu_matmul` 的标量循环换成真正的 NPU 调用：
+
+```
+xnnlMatmulCreateGraph -> midaSubgraphInstantiate -> midaStreamLaunchSubgraph
+```
+
+离线需要的三个语义都没有文档，只能从二进制里读：
+
+| 目标 | 状态 |
+|---|---|
+| `xnnlMatmulCreateGraph`（15 个参数） | 已反汇编（`libxnnl.so` +0x5d386c，2516 字节）；参数到结构体的落栈与调用序列可见，但**未能恢复语义** |
+| `npu::umd::SubgraphImpl::Instantiate`（解释 `err=1`） | 未开始 |
+| `npu::umd::DeviceImpl::Init` | 未开始 |
+
+**阻塞点**：本机没有可用的反编译器（Ghidra 未安装，IDA/Kuna/Hopper 均未配置），
+纯 ARM64 手读 2.5 KB 函数来还原 15 个参数的成本过高。可行的推进方式：
+
+1. 安装 Ghidra 后重新分析（REA 的 `analyze_function` 即可直接产出伪代码）；
+2. 或者上设备用**试探法**：构造最小 matmul（K=N=M=16），逐参数变化看返回值与结果，
+   通常几次就能锁定参数顺序。
+
+在此之前，NPU 路径的代码不写死猜测的语义，避免产生看似可用实则错误的实现。
