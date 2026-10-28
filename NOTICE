@@ -1,0 +1,46 @@
+# Third-party notices and attribution
+
+This repository integrates and builds on work by others. The project would not
+exist without it.
+
+## o3root — the temporary root chain (MIT)
+
+  https://github.com/zsw125/o3root
+
+`apps/o3root/jniLibs/arm64-v8a/libo3p.so` is the unmodified payload built from
+o3root v3.0. It implements the CVE-2026-98260 privilege escalation and the
+runtime KernelSU LKM loader that this project's root flow drives. All credit for
+that exploit chain belongs to the o3root authors. Our own code only drives it
+(Shizuku), stages it, patches SELinux policy with ksud, and runs the NPU probes.
+
+o3root is MIT licensed. Its own disclaimer applies: research/education only,
+run it on hardware you own, expect crashes, and treat the result as a
+research-grade root, not a production one.
+
+## KernelSU (GPL-3.0)
+
+  https://github.com/tiann/KernelSU
+
+`ksud` is extracted from the KernelSU manager APK at build time
+(`scripts/fetch-ksud.sh`) and is **not** redistributed here. The KernelSU LKM
+itself is embedded inside the o3root payload.
+
+## Shizuku (Apache-2.0)
+
+  https://github.com/RikkaApps/Shizuku
+
+`tools/shizuku/*.jar` are the client libraries used to run the payload in the
+`shell` SELinux domain.
+
+## llama.cpp (MIT)
+
+  https://github.com/ggml-org/llama.cpp
+
+`tools/ggml-o3npu/` is a ggml backend plugin for llama.cpp; llama.cpp itself is
+not vendored here.
+
+## Vendor libraries
+
+The VeriSilicon / Xiaomi NPU userspace libraries (`libxnumd.so`, `libxnnl.so`,
+`libovxlib.so`, ...) are proprietary and are **not** redistributed. The tools
+here load them from the device at runtime, or from files you pull yourself.

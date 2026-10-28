@@ -1,0 +1,762 @@
+# libxnnl constraint strings: 1817, groups: 410
+# distinct XNNL_* constants seen: 63
+
+## constants
+XNNL_ACT1_TYPE_DISABLE
+XNNL_ACT2_TYPE_DISABLE
+XNNL_AIGC_DOWN
+XNNL_AIGC_GATE
+XNNL_AIGC_K
+XNNL_AIGC_O
+XNNL_AIGC_PV
+XNNL_AIGC_Q
+XNNL_AIGC_QK
+XNNL_AIGC_UP
+XNNL_AIGC_V
+XNNL_AIGC_WEIGHT_NUM
+XNNL_BLOCK_ATTENTION
+XNNL_DATA_FLOAT
+XNNL_DATA_HALF
+XNNL_DATA_INT16
+XNNL_DATA_INT32
+XNNL_DATA_INT4
+XNNL_DATA_INT8
+XNNL_DATA_UINT16
+XNNL_DATA_UINT32
+XNNL_DATA_UINT8
+XNNL_DEBUG_DUMP_LEVEL_ENV
+XNNL_DUMP_LEVEL
+XNNL_DUMP_MODE
+XNNL_DUMP_PATH
+XNNL_EAGLET_LMHEAD_DOWN
+XNNL_EAGLET_LMHEAD_UP
+XNNL_EAGLET_LMHEAD_WEIGHT_NUM
+XNNL_ENFORCE_IF_COMPRESS
+XNNL_EPL_DATA_MODE_DISABLE
+XNNL_EW_OP_DISABLE
+XNNL_EW_OP_SUB
+XNNL_INTERP_MODE_CUBIC
+XNNL_INTERP_MODE_LINEAR
+XNNL_INTERP_MODE_NEAREST
+XNNL_LLM_DOWN
+XNNL_LLM_EAGLET_WEIGHT_NUM
+XNNL_LLM_FCE
+XNNL_LLM_FCH
+XNNL_LLM_GATE
+XNNL_LLM_K
+XNNL_LLM_O
+XNNL_LLM_Q
+XNNL_LLM_UP
+XNNL_LLM_V
+XNNL_LLM_WEIGHT_NUM
+XNNL_MEM_DDR
+XNNL_MEM_L2B
+XNNL_PADDING_MODE_BORDER
+XNNL_PADDING_MODE_REFLECTION
+XNNL_PADDING_MODE_ZEROS
+XNNL_PAD_MODE_WRAP
+XNNL_QUANTIZE_MODE_PERCHANNEL
+XNNL_QUANTIZE_MODE_PERTENSOR
+XNNL_REDUCE_NONE
+XNNL_SKIP_DRAFT_UPDATE
+XNNL_SKIP_UPDATE
+XNNL_STATUS_INTERNAL_ERROR
+XNNL_STATUS_SUCCESS
+XNNL_TENSOR_LINEAR
+XNNL_TENSOR_NCHW
+XNNL_TENSOR_NHWC
+
+## groups
+
+### general (197)
+  - (nSize % GW_ALIGN64_SIZE != 0)
+  - img0_ == nullptr
+  - [Update] Invalid callback type for update1DDmaNode
+  - ci % num_groups != 0
+  - _Layout1
+  - [Prefill Attn UpdateForNextToken] softmax update failed
+  - rgb == nullptr
+  - [Prefill Attn UpdateForNextToken] PV update failed
+  - "zp_dtype": "
+  - (nSlice % GW_ALIGN64_SIZE != 0)
+  - input1 == nullptr
+  - GroupNormV2: invalid output scale=%f
+
+### k_text (64)
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBegin
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqEnd
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBeginEnd
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBegin
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqEnd
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBeginEnd
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBegin
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqEnd
+  - .k_text.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBeginEnd
+
+### k_abi (64)
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBegin
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqEnd
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBeginEnd
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBegin
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqEnd
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBeginEnd
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBegin
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqEnd
+  - .k_abi.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBeginEnd
+
+### k_info (64)
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBegin
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqEnd
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBeginEnd
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBegin
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqEnd
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBeginEnd
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBegin
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqEnd
+  - .k_info.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBeginEnd
+
+### k_arg (64)
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBegin
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqEnd
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBeginEnd
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBegin
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqEnd
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBeginEnd
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBegin
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqEnd
+  - .k_arg.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBeginEnd
+
+### llvm (64)
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBegin.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqEnd.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch1_SeqBeginEnd.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBegin.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqEnd.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch2_SeqBeginEnd.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBegin.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqEnd.dsmem
+  - llvm.xmnpu.kernel.LSTM_Half_InputEven_HiddenEven_Layout0_Batch3_SeqBeginEnd.dsmem
+
+### input_descs (55)
+  - input_descs[3]->layout != input_descs[0]->layout
+  - input_descs[1]->location != XNNL_MEM_L2B || (uint64_t)inputs[1] >= (uint64_t)maxL2bSize_
+  - input_descs[2]->location != XNNL_MEM_L2B || (uint64_t)inputs[2] >= (uint64_t)maxL2bSize_
+  - input_descs[0]->dataType != XNNL_DATA_INT16 && input_descs[0]->dataType != XNNL_DATA_INT8 && input_descs[0]->dataType != XNNL_DATA_HALF
+  - input_descs[0]->layout != XNNL_TENSOR_NHWC
+  - input_descs[0]->dataType != XNNL_DATA_HALF
+  - input_descs[0]->shape[1] != 6
+  - input_descs[3]->dataType != XNNL_DATA_INT8 && input_descs[3]->dataType != XNNL_DATA_INT4
+  - input_descs[4]->dataType != XNNL_DATA_HALF
+  - input_descs[4]->location != XNNL_MEM_L2B || (uint64_t)inputs[4] >= (uint64_t)maxL2bSize_
+  - input_descs[3]->dataType != XNNL_DATA_HALF
+  - input_descs[0]->dataType != XNNL_DATA_INT16 && input_descs[0]->dataType != XNNL_DATA_HALF
+
+### weights_ (50)
+  - weights_->attention_sink_bias.data != nullptr && weights_->attention_sink_bias.dtype != xnnlDataType_t::XNNL_DATA_HALF
+  - weights_->reordered_weights[XNNL_LLM_GATE].data == nullptr
+  - weights_->rmsnorm_weight.data == nullptr
+  - weights_->prefill_sdp_params[XNNL_LLM_UP].data == nullptr
+  - weights_->decode_groupwise_scale[XNNL_LLM_UP].data == nullptr
+  - weights_->vit_sdp_params[XNNL_AIGC_UP].data == nullptr
+  - weights_->sdp_params[XNNL_EAGLET_LMHEAD_DOWN].data == nullptr
+  - weights_->vit_groupwise_scale[XNNL_AIGC_UP].data == nullptr
+  - weights_->reordered_weights[XNNL_LLM_UP].data == nullptr
+  - weights_->prefill_groupwise_scale[XNNL_LLM_UP].data == nullptr
+  - weights_->decode_groupwise_scale[XNNL_LLM_DOWN].data == nullptr
+  - weights_->reordered_weights[XNNL_AIGC_UP].data == nullptr
+
+### inputDesc_ (33)
+  - (inputDesc_->dataType == XNNL_DATA_HALF && outputDesc_->dataType != XNNL_DATA_HALF)
+  - (inputDesc_->dataType != XNNL_DATA_FLOAT) && (inputDesc_->dataType != XNNL_DATA_HALF)
+  - inputDesc_->shape == nullptr
+  - inputDesc_->layout != XNNL_TENSOR_LINEAR
+  - inputDesc_->rank != 4
+  - inputDesc_->shape[poolingDesc_->nbDims - 1] != outputDesc_->shape[poolingDesc_->nbDims - 1]
+  - ((inputDesc_->layout != XNNL_TENSOR_LINEAR) && (inputDesc_->layout != XNNL_TENSOR_NCHW) && (inputDesc_->layout != XNNL_TENSOR_NHWC))
+  - inputDesc_->location != XNNL_MEM_DDR
+  - inputDesc_->dataType == XNNL_DATA_HALF
+  - inputDesc_->shape[inputDesc_->rank - 1] != scaleDesc_->shape[scaleDesc_->rank - 1]
+  - inputDesc_->shape[dim] != indexDesc_->shape[dim]
+  - inputDesc_->rank != convDesc_->nbDims
+
+### weights (28)
+  - (weights.quant_params[1][XNNL_AIGC_K].zp.dtype != XNNL_DATA_INT8)
+  - weights.pre_rmsnorm_weight.data == nullptr
+  - (weights.reordered_weights[XNNL_AIGC_Q].dtype != XNNL_DATA_INT8)
+  - (weights.quant_params[0][XNNL_AIGC_Q].zp.dtype != XNNL_DATA_UINT16)
+  - (weights.quant_params[1][XNNL_AIGC_Q].zp.dtype != XNNL_DATA_INT8)
+  - (weights.quant_params[1][XNNL_AIGC_PV].zp.dtype != XNNL_DATA_INT8)
+  - weights[XNNL_EAGLET_LMHEAD_DOWN].data == nullptr
+  - (weights.quant_params[0][XNNL_AIGC_QK].zp.dtype != XNNL_DATA_INT16)
+  - weights == nullptr
+  - weights[XNNL_EAGLET_LMHEAD_UP].data == nullptr
+  - (weights.quant_params[0][XNNL_AIGC_QK].scale.dtype != XNNL_DATA_FLOAT)
+  - weights.size() != XNNL_EAGLET_LMHEAD_WEIGHT_NUM
+
+### outputDesc_ (21)
+  - outputDesc_->dTypeScale != XNNL_DATA_FLOAT
+  - outputDesc_ == nullptr
+  - outputDesc_->rank != poolingDesc_->nbDims
+  - outputDesc_->dataType != XNNL_DATA_FLOAT
+  - outputDesc_->dataType != XNNL_DATA_UINT8
+  - outputDesc_->shape[0] != roisDesc_->shape[0]
+  - outputDesc_->shape[convDesc_->nbDims - 1] != weightDesc_->shape[0]
+  - outputDesc_->rank != convDesc_->nbDims
+  - expectOut != outputDesc_->shape[id + 1]
+  - outputDesc_->shape[0] != 1
+  - outputDesc_->layout != XNNL_TENSOR_LINEAR
+  - outputDesc_->dataType != inputDesc_->dataType
+
+### outputDesc (20)
+  - outputDesc->dataType != XNNL_DATA_UINT16
+  - (outputDesc->shape[1] != inputDesc->shape[1]) && (outputDesc->shape[1] != inputDesc->shape[2])
+  - outputDesc->shape[1] != 136
+  - outputDesc == nullptr
+  - outputDesc->shape[0] != 1
+  - outputDesc->shape[3] != inputDesc->shape[3]
+  - (outputDesc->dataType != XNNL_DATA_UINT8) && (outputDesc->dataType != XNNL_DATA_UINT16)
+  - outputDesc->shape[3] != 4
+  - outputDesc->shape[0] != 136
+  - outputDesc->shape[3] != 1
+  - outputDesc->shape[2] != 640
+  - outputDesc->shape[3] != 81
+
+### inputDesc (18)
+  - inputDesc->rank != outputDesc->rank
+  - inputDesc->shape[0] != 1
+  - inputDesc->dataType != XNNL_DATA_HALF
+  - inputDesc->rank != ft0Desc->rank
+  - inputDesc->shape[i] != ft0Desc->shape[i]
+  - inputDesc->shape[i] != ft1Desc->shape[i]
+  - inputDesc->shape[3] != 1 && inputDesc->shape[3] != 3
+  - inputDesc->shape[i] != outputDesc->shape[i]
+  - inputDesc->dataType != XNNL_DATA_UINT8
+  - inputDesc->rank != 4
+  - inputDesc->isAsym && weightData == nullptr
+  - inputDesc->rank != 4 || outputDesc->rank != 4
+
+### output_ (18)
+  - output_->rank != swigluB_->rank
+  - output_->tensorShape[2] != input_->tensorShape[2]
+  - output_->tensorShape[2] != input_->tensorShape[1]
+  - output_->tensorShape[3] != wN
+  - output_->tensorShape[0] != 1
+  - output_->rank != 3
+  - output_->tensorShape[0] != input_->tensorShape[0]
+  - output_->location != XNNL_MEM_L2B
+  - output_->boxDim[i] != data_->boxDim[i]
+  - gemm+transpose: output_->tensorShape[3] == output_->boxDim[3] assert falied!!!
+  - output_->rank != data_->rank
+  - (output_->dataType != XNNL_DATA_INT16)
+
+### input_ (18)
+  - input_->layout != XNNL_TENSOR_NHWC
+  - input_->rank != 2 && scale_->rank != 2
+  - input_ == nullptr
+  - input_->layout != output_->layout
+  - input_->tensorShape[3] != wK
+  - input_->dataType != output_->dataType
+  - input_->rank != weight_->rank
+  - input_->rank != output_->rank
+  - bmmMultiInput_ && input_->tensorShape[1] % weight_->tensorShape[1] != 0
+  - input_->tensorShape[1] % weight_->tensorShape[1] != 0
+  - input_->location != XNNL_MEM_L2B
+  - input_->tensorShape[0] != 1
+
+### aDesc (16)
+  - aDesc->boxDim[1] != 1
+  - aDesc->shape[i] != cDesc->shape[i]
+  - aDesc->boxDim[3] != 512
+  - aDesc->shape[i] != bDesc->shape[i]
+  - aDesc->shape[1] != 1
+  - aDesc->boxDim[0] != 1
+  - aDesc->boxStart[1] != 0
+  - aDesc->dataType != XNNL_DATA_FLOAT
+  - aDesc->boxStart[3] != 0
+  - aDesc->boxStart[0] != 0
+  - aDesc->rank != 4
+  - aDesc->shape[3] != 512
+
+### inputTensor_ (15)
+  - inputTensor_->layout != weightTensor_->layout
+  - abs(RollH_) == 0 || abs(RollH_) >= inputTensor_->boxDim[1] || abs(RollW_) == 0 || abs(RollW_) >= inputTensor_->boxDim[2]
+  - inputTensor_->boxDim[0] != 1
+  - inputTensor_->rank == 0
+  - inputTensor_->layout != outputTensor_->layout
+  - inputTensor_ == nullptr
+  - inputTensor_->boxDim[idx] == 0
+  - (inputTensor_->tensorShape[3] % blkK_ != 0)
+  - inputTensor_->boxDim[2] != outputTensor_->boxDim[2]
+  - inputTensor_->rank != weightTensor_->rank
+  - inputTensor_->boxDim[1] != 1
+  - inputTensor_->rank != outputTensor_->rank
+
+### yDesc (13)
+  - yDesc->shape[1] != 2 * uvDesc->shape[1]
+  - yDesc->shape[0] != 1
+  - yDesc->dataType != rgbDesc->dataType
+  - (yDesc->dataType != XNNL_DATA_UINT8) && (yDesc->dataType != XNNL_DATA_UINT16)
+  - yDesc->shape[2] != uvDesc->shape[2]
+  - yDesc->shape[3] != 1
+  - yDesc->shape[2] % 2 != 0
+  - yDesc == nullptr
+  - yDesc->shape[1] % 2 != 0
+  - yDesc->rank != 4
+  - yDesc->shape[2] != rgbDesc->shape[2]
+  - yDesc->dataType != uvDesc->dataType
+
+### convDesc_ (13)
+  - convDesc_->group != 1
+  - convDesc_->kernelSize[1] != 3
+  - convDesc_->dilation[0] != 1
+  - convDesc_->dilation[1] != 1
+  - convDesc_->kernelSize[0] != 3
+  - convDesc_->nbDims != 4
+  - convDesc_->kernelSize[id] != weightDesc_->shape[id + 1]
+  - convDesc_->stride[id] != convDesc_->stride[0]
+  - convDesc_ == nullptr
+  - convDesc_->dilation[id] != convDesc_->dilation[0]
+  - convDesc_->stride[0] != 1
+  - convDesc_->kernelSize[id] != convDesc_->kernelSize[0]
+
+### weight_ (13)
+  - weight_->tensorShape[weight_->rank - 2] % headDim_ != 0
+  - weight_ == nullptr
+  - weight_->dataType != XNNL_DATA_INT8 && weight_->dataType != XNNL_DATA_HALF && weight_->dataType != XNNL_DATA_INT4
+  - weight_->boxDim[1] != output_->boxDim[2]
+  - bmmMultiInput_ && weight_->tensorShape[1] != input_->tensorShape[1]
+  - weight_->rank != 3
+  - ((weight_->dataType != XNNL_DATA_INT8) && (weight_->dataType != XNNL_DATA_INT4))
+  - wK % weight_->groupwiseCnt != 0
+  - weight_->tensorShape[weight_->rank - 1] != in_->tensorShape[in_->rank - 1]
+  - weight_->tensorShape[0] != input_->tensorShape[0]
+  - weight_->tensorShape[1] != input_->tensorShape[1]
+  - weight_->tensorShape[0] != 1
+
+### maskPreDesc (13)
+  - maskPreDesc->dataType != XNNL_DATA_UINT8
+  - maskPreDesc->shape[i] != outputDesc->shape[i]
+  - maskPreDesc->rank != catMapDesc->rank
+  - maskPreDesc == nullptr
+  - maskPreDesc->shape[i] != confMapDesc->shape[i]
+  - maskPreDesc->shape[i] != catMapDesc->shape[i]
+  - maskPreDesc->shape[0] != 1
+  - maskPreDesc->shape[1] != 360 && maskPreDesc->shape[1] != 400 && maskPreDesc->shape[1] != 480
+  - maskPreDesc->rank != outputDesc->rank
+  - maskPreDesc->rank != 4 || confMapDesc->rank != 4 || catMapDesc->rank != 4 || outputDesc->rank != 4
+  - maskPreDesc->shape[3] != 1
+  - maskPreDesc->shape[2] != 640
+
+### reordered_weight_buffers (13)
+  - reordered_weight_buffers[XNNL_LLM_UP].data == nullptr
+  - reordered_weight_buffers.size() != XNNL_EAGLET_LMHEAD_WEIGHT_NUM
+  - reordered_weight_buffers.size() == 0
+  - reordered_weight_buffers[XNNL_LLM_DOWN].data == nullptr
+  - reordered_weight_buffers[XNNL_LLM_GATE].data == nullptr
+  - reordered_weight_buffers[XNNL_AIGC_O].data == nullptr
+  - reordered_weight_buffers.size() != XNNL_AIGC_WEIGHT_NUM
+  - reordered_weight_buffers[XNNL_AIGC_UP].data == nullptr
+  - reordered_weight_buffers.size() != XNNL_LLM_WEIGHT_NUM
+  - reordered_weight_buffers.size() != XNNL_LLM_EAGLET_WEIGHT_NUM
+  - reordered_weight_buffers[XNNL_AIGC_DOWN].data == nullptr
+  - reordered_weight_buffers[XNNL_AIGC_GATE].data == nullptr
+
+### iTensorDesc_ (13)
+  - (iTensorDesc_->dataType == XNNL_DATA_FLOAT && oTensorDesc_->dataType != XNNL_DATA_FLOAT)
+  - (iTensorDesc_->dataType == XNNL_DATA_HALF && stash_type_ == 1)
+  - iTensorDesc_ == nullptr
+  - iTensorDesc_->shape[1] != cosTensorDesc_->shape[1]
+  - iTensorDesc_->dataType != XNNL_DATA_FLOAT && iTensorDesc_->dataType != XNNL_DATA_HALF
+  - iTensorDesc_->shape[dim] != oTensorDesc_->shape[dim]
+  - iTensorDesc_->layout != XNNL_TENSOR_LINEAR
+  - iTensorDesc_->rank != oTensorDesc_->rank
+  - iTensorDesc_->rank != 3
+  - iTensorDesc_->shape[i] != oTensorDesc_->shape[i]
+  - (iTensorDesc_->dataType != XNNL_DATA_HALF && iTensorDesc_->dataType != XNNL_DATA_FLOAT)
+  - (iTensorDesc_->dataType == XNNL_DATA_HALF && oTensorDesc_->dataType != XNNL_DATA_HALF)
+
+### inputTensorDesc_ (13)
+  - inputTensorDesc_->rank != weightTensorDesc_->rank
+  - inputTensorDesc_->shape[1] != weightTensorDesc_->shape[1]
+  - inputTensorDesc_ == nullptr
+  - inputTensorDesc_->layout != XNNL_TENSOR_NHWC
+  - inputTensorDesc_->shape[3] != wK
+  - inputTensorDesc_->shape[2] != outputTensorDesc_->shape[2]
+  - inputTensorDesc_->shape[0] != weightTensorDesc_->shape[0]
+  - inputTensorDesc_->layout != weightTensorDesc_->layout
+  - inputTensorDesc_->rank != outputTensorDesc_->rank
+  - inputTensorDesc_->shape[0] != 1
+  - inputTensorDesc_->layout != outputTensorDesc_->layout
+  - inputTensorDesc_->shape[1] != 1
+
+### confMapDesc (11)
+  - confMapDesc->shape[i] != outputDesc->shape[i]
+  - confMapDesc->rank != outputDesc->rank
+  - confMapDesc == nullptr
+  - confMapDesc->shape[2] != 640
+  - confMapDesc->rank != catMapDesc->rank
+  - confMapDesc->dataType != XNNL_DATA_HALF
+  - confMapDesc->shape[i] != catMapDesc->shape[i]
+  - confMapDesc->shape[0] != 1
+  - confMapDesc->shape[3] != 1
+  - confMapDesc->rank != 4 || catMapDesc->rank != 4 || outputDesc->rank != 4
+  - confMapDesc->shape[1] != 360 && confMapDesc->shape[1] != 400 && confMapDesc->shape[1] != 480
+
+### img0Desc_ (10)
+  - img0Desc_->shape[1] != img1Desc_->shape[1]
+  - img0Desc_->shape[2] != img1Desc_->shape[2]
+  - img0Desc_->dataType != XNNL_DATA_UINT8
+  - img0Desc_->shape[3] != outputDesc_->shape[3]
+  - img0Desc_->shape[0] != 1
+  - img0Desc_->shape[1] != outputDesc_->shape[1]
+  - img0Desc_->shape[3] != img1Desc_->shape[3]
+  - img0Desc_->rank != 4
+  - img0Desc_->shape[2] != outputDesc_->shape[2]
+  - img0Desc_->layout != XNNL_TENSOR_NHWC
+
+### output_desc (10)
+  - output_desc[0]->rank != 4 && output_desc[0]->rank != 2
+  - output_desc[0]->location != XNNL_MEM_DDR
+  - output_desc[0]->location != XNNL_MEM_L2B
+  - output_desc[0]->location != XNNL_MEM_L2B || (uint64_t)output[0] >= maxL2bSize_
+  - output_desc[0]->dataType != XNNL_DATA_HALF
+  - output_desc.size() != 1
+  - output_desc[0] == nullptr
+  - output_desc[0]->rank == 0
+  - output_desc[0]->rank != 4
+  - output_desc[0]->rank != input_descs[0]->rank
+
+### gridDesc_ (10)
+  - gridDesc_ == nullptr
+  - gridDesc_->shape[1] != outputDesc_->shape[1]
+  - gridDesc_->rank != 4
+  - gridDesc_->shape[1] != outputDesc_->shape[2]
+  - gridDesc_->shape[2] != outputDesc_->shape[2]
+  - gridDesc_->shape[0] != inputDesc_->shape[0]
+  - gridDesc_->shape[gridDesc_->rank - 1] != 2
+  - gridDesc_->shape[2] != outputDesc_->shape[3]
+  - gridDesc_->dataType != XNNL_DATA_FLOAT && gridDesc_->dataType != XNNL_DATA_HALF
+  - gridDesc_->shape[0] != outputDesc_->shape[0]
+
+### output (10)
+  - output->dTypeScale != XNNL_DATA_FLOAT && output->dTypeScale != XNNL_DATA_HALF
+  - output->scale == nullptr
+  - output->dTypeZp != output->dataType
+  - output->location != XNNL_MEM_L2B
+  - output not support per-channel quantize!!!
+  - output[0] == nullptr
+  - output not support per-channel quantize
+  - output == nullptr
+  - output.size() != 1
+  - output->zp == nullptr
+
+### imgDesc (9)
+  - (imgDesc->dataType != XNNL_DATA_UINT8) && (imgDesc->dataType != XNNL_DATA_UINT16)
+  - imgDesc->dataType != outputDesc->dataType
+  - imgDesc->rank != 3
+  - imgDesc->dataType != lutDesc->dataType
+  - imgDesc->rank != outputDesc->rank
+  - imgDesc == nullptr
+  - imgDesc->shape[2] != 3
+  - imgDesc->shape[0] != 136
+  - imgDesc->shape[1] != 136
+
+### inputs (9)
+  - inputs.size() != 1 && inputs.size() != 4
+  - inputs.size() != 6
+  - inputs.size() != 5
+  - inputs[idx] == nullptr
+  - inputs.size() != 3
+  - inputs[0] == nullptr
+  - inputs.size() != 1
+  - inputs.size() != 7
+  - inputs.size() != EAGLET_QKV_IN_NUM
+
+### in_ (9)
+  - in_->tensorShape[i] != out_->tensorShape[i]
+  - in_->dataType != out_->dataType
+  - in_->scale == nullptr
+  - in_->tensorShape[1] == 0
+  - (in_->isAsym) && (in_->zp == nullptr)
+  - in_->rank != out_->rank
+  - in_->rank != 2
+  - static_cast<int32_t>(repetition_) * in_->tensorShape[0] != out_->tensorShape[0]
+  - in_->location != XNNL_MEM_L2B
+
+### params (9)
+  - params->output_scale == nullptr
+  - params->scale_dtype != XNNL_DATA_FLOAT
+  - params->input_dtype != XNNL_DATA_HALF
+  - params == nullptr
+  - params->rows == 0 || params->cols == 0
+  - params->output_zp == nullptr
+  - params->zp_dtype != XNNL_DATA_INT32
+  - params->output_dtype != XNNL_DATA_INT16
+  - params->gamma_dtype != XNNL_DATA_HALF
+
+### inDataATensor_ (9)
+  - inDataATensor_->boxDim[0] != inDataBTensor_->boxDim[0] || inDataATensor_->boxDim[3] != inDataBTensor_->boxDim[3]
+  - inDataATensor_->rank != outputTensor_->rank
+  - inDataATensor_->boxDim[idx] == 0
+  - inDataATensor_->boxDim[1] != inDataBTensor_->boxDim[1] || inDataATensor_->boxDim[2] != inDataBTensor_->boxDim[2]
+  - inDataATensor_ == nullptr
+  - inDataATensor_->rank != inDataBTensor_->rank
+  - inDataATensor_->layout != inDataBTensor_->layout
+  - inDataATensor_->layout != outputTensor_->layout
+  - inDataATensor_->layout != XNNL_TENSOR_NHWC
+
+### input1Desc (9)
+  - input1Desc->dataType != outputDesc->dataType
+  - input1Desc->shape[i] != input2Desc->shape[i]
+  - input1Desc->dataType != input2Desc->dataType
+  - input1Desc->rank != outputDesc->rank
+  - input1Desc->shape[0] != 1
+  - (input1Desc->dataType != XNNL_DATA_HALF) && (input1Desc->dataType != XNNL_DATA_FLOAT)
+  - input1Desc->rank != 4
+  - input1Desc->rank != input2Desc->rank
+  - input1Desc->shape[i] != outputDesc->shape[i]
+
+### attention (9)
+  - attention pv matmul data reordered failed
+  - attention o matmul get sdp reordered size failed
+  - attention oMatmul get gw rerodered size failed
+  - attention oMatmul gw data reordered failed
+  - attention qk matmul get sdp reordered size failed
+  - attention o matmul get sdp rerodered size failed
+  - attention qk matmul data reordered failed
+  - attention o matmul data reordered failed
+  - attention pv matmul get sdp rerodered size failed
+
+### unsupported (9)
+  - unsupported kernel:%d
+  - unsupported arm64 register
+  - unsupported restore location for register
+  - unsupported restore location for float register
+  - unsupported configuration: only support (rope+transpose+quant), (rope+transpose), (transpose+quant), or (transpose+no-quant)
+  - unsupported input/weight/output dataType combination!
+  - unsupported inp/oup datatype %d/%d
+  - unsupported THREAD_PER_TB=%d c_=%d
+  - unsupported ow=%d wPerWarp=%d
+
+### eplDesc (8)
+  - @(eplDesc->xBiasMode != XNNL_EPL_DATA_MODE_DISABLE) && (eplParams->xBias == nullptr)
+  - eplDesc == nullptr
+  - (eplDesc->cBiasMode != XNNL_EPL_DATA_MODE_DISABLE) && (eplParams->cBias == nullptr)
+  - (eplDesc->actScaleMode != XNNL_EPL_DATA_MODE_DISABLE) && (eplParams->actScale == nullptr)
+  - (eplDesc->ewBiasMode != XNNL_EPL_DATA_MODE_DISABLE) && (eplParams->ewBias == nullptr)
+  - (eplDesc->cScaleMode != XNNL_EPL_DATA_MODE_DISABLE) && (eplParams->cScale == nullptr)
+  - (eplDesc->xScaleMode != XNNL_EPL_DATA_MODE_DISABLE) && (eplParams->xScale == nullptr)
+  - (eplDesc->ewScaleMode != XNNL_EPL_DATA_MODE_DISABLE) && (eplParams->ewScale == nullptr)
+
+### histDesc (8)
+  - histDesc->dataType != XNNL_DATA_UINT32
+  - histDesc->rank != outputDesc->rank
+  - histDesc->shape[3] != 1024
+  - histDesc->shape[0] != 1
+  - histDesc->shape[i] != outputDesc->shape[i]
+  - histDesc->shape[2] != 1
+  - histDesc == nullptr
+  - histDesc->rank != 4
+
+### data_ (8)
+  - data_->boxDim[0] != output_->boxDim[0]
+  - data_->boxDim[2] != weight_->boxDim[2]
+  - data_->rank != 3
+  - data_ == nullptr
+  - (data_->dataType != XNNL_DATA_HALF)
+  - data_->rank != 2 && data_->rank != 4
+  - data_->location != XNNL_MEM_L2B
+  - data_->boxDim[1] != 1
+
+### cDesc (8)
+  - cDesc->boxStart[1] != 0
+  - cDesc->boxDim[3] != 512
+  - cDesc->boxDim[0] != 1
+  - cDesc->dataType != XNNL_DATA_FLOAT
+  - cDesc->boxDim[1] != 1
+  - cDesc == nullptr
+  - cDesc->boxStart[3] != 0
+  - cDesc->boxStart[0] != 0
+
+### flowDesc_ (8)
+  - flowDesc_->shape[1] != maskDesc_->shape[1]
+  - flowDesc_->dataType != XNNL_DATA_HALF
+  - flowDesc_->layout != XNNL_TENSOR_NHWC
+  - flowDesc_->shape[2] != maskDesc_->shape[2]
+  - flowDesc_->rank != 4
+  - flowDesc_ == nullptr
+  - flowDesc_->shape[0] != 1
+  - flowDesc_->shape[3] != 4
+
+### bDesc (8)
+  - bDesc->dataType != XNNL_DATA_FLOAT
+  - bDesc->boxDim[3] != 512
+  - bDesc == nullptr
+  - bDesc->boxStart[0] != 0
+  - bDesc->boxDim[1] != 1
+  - bDesc->boxStart[1] != 0
+  - bDesc->boxStart[3] != 0
+  - bDesc->boxDim[0] != 1
+
+### WARNING (8)
+  - WARNING!!! tiled num between tensors are not equal, tile failed! L2B will be bypassed!
+  - WARNING!!! L2B usage peak Bytes is bigger than L2B ping-pong Bytes, tiled failed! Please reduce your tileSize
+  - WARNING!!! there is not enough L2B mem for user's tile size! tile failed!
+  - WARNING!!! user indicates L2B reserved Bytes is bigger than L2bMaxSize! tile failed!
+  - WARNING!!! tensor[%d]'s tileSize(=%d) > shape[%d]=%ld, tile failed! L2B will be bypassed!
+  - WARNING!!! allTiledTensorBytes(=%ld) > l2bPingPongBytes_(=%ld), tile failed!
+  - WARNING!!! tiling failed! the L2B will be bypassed!!!
+  - WARNING!!! tile failed, just launch kernel once and user's tma will be from/to ddr
+
+### outputTensor_ (8)
+  - (outputTensor_->tensorShape[3] / 2) != cosTensor_->tensorShape[3] || (outputTensor_->tensorShape[3] / 2) != sinTensor_->tensorShape[3]
+  - outputTensor_->rank != 4
+  - outputTensor_->boxDim[idx] == 0
+  - outputTensor_->isAsym == true
+  - (outputTensor_->dataType != XNNL_DATA_INT16 && outputTensor_->dataType != XNNL_DATA_UINT16 && outputTensor_->dataType != XNNL_DATA_INT8 && outputTensor_->dataType != XNNL_DATA_UINT8)
+  - outputTensor_->scale == nullptr
+  - outputTensor_ == nullptr
+  - outputTensor_->layout != XNNL_TENSOR_NHWC
+
+### weightDesc (7)
+  - weightDesc->dataType != XNNL_DATA_HALF && weightDesc->dataType != XNNL_DATA_INT8 && weightDesc->dataType != XNNL_DATA_UINT8
+  - !(weightDesc->groupwiseCnt > 0 && reroderedGwScale != nullptr)
+  - weightDesc->dataType == XNNL_DATA_HALF
+  - weightDesc->rank != 4
+  - weightDesc->dataType == XNNL_DATA_HALF || weightDesc->dataType == XNNL_DATA_UINT8
+  - weightDesc == nullptr
+  - (weightDesc->groupwiseScale == nullptr)
+
+### input (7)
+  - input->location != XNNL_MEM_L2B
+  - input->rank != output->rank
+  - input->isQuant != weight->isQuant
+  - input == nullptr
+  - input->tensorShape[i] != output->tensorShape[i]
+  - input->layout != output->layout
+  - (input->dataType != XNNL_DATA_FLOAT) && (input->dataType != XNNL_DATA_HALF)
+
+### invalid (7)
+  - invalid weight data type[%d](support FP16)
+  - invalid quant mode[%d] for matmul's right matrix
+  - invalid quant mode[%d] for matmul's left matrix
+  - invalid input shape rank
+  - invalid weight data type[%d](support FP16/INT4/INT8)
+  - invalid nbDims: %d
+  - invalid poolingMode: %d
+
+### uvDesc (7)
+  - (uvDesc->dataType != XNNL_DATA_UINT8) && (uvDesc->dataType != XNNL_DATA_UINT16)
+  - uvDesc == nullptr
+  - uvDesc->rank != 4
+  - uvDesc->shape[0] != 1
+  - uvDesc->shape[2] % 2 != 0
+  - uvDesc->shape[1] % 2 != 0
+  - uvDesc->shape[3] != 1
+
+### rgbDesc (7)
+  - rgbDesc->rank != 4
+  - rgbDesc->shape[2] % 2 != 0
+  - rgbDesc == nullptr
+  - rgbDesc->shape[0] != 1
+  - rgbDesc->shape[1] % 2 != 0
+  - (rgbDesc->dataType != XNNL_DATA_UINT8) && (rgbDesc->dataType != XNNL_DATA_UINT16)
+  - rgbDesc->shape[3] != 3
+
+### prefill_reordered_sdp_param_buffers (7)
+  - prefill_reordered_sdp_param_buffers[XNNL_AIGC_DOWN].data == nullptr
+  - prefill_reordered_sdp_param_buffers[XNNL_LLM_DOWN].data == nullptr
+  - prefill_reordered_sdp_param_buffers[XNNL_LLM_UP].data == nullptr
+  - prefill_reordered_sdp_param_buffers.size() != XNNL_LLM_WEIGHT_NUM
+  - prefill_reordered_sdp_param_buffers.size() != XNNL_AIGC_WEIGHT_NUM
+  - prefill_reordered_sdp_param_buffers[XNNL_AIGC_GATE].data == nullptr
+  - prefill_reordered_sdp_param_buffers[XNNL_LLM_GATE].data == nullptr
+
+### outImageDesc (7)
+  - outImageDesc->dataType != XNNL_DATA_INT8
+  - outImageDesc == nullptr
+  - outImageDesc->rank != 4
+  - outImageDesc->shape[3] != 1
+  - outImageDesc->shape[2] != 192
+  - outImageDesc->shape[0] != 1
+  - outImageDesc->shape[1] != 192
+
+### lutDesc (7)
+  - lutDesc->rank != 4
+  - (lutDesc->dataType != XNNL_DATA_UINT8) && (lutDesc->dataType != XNNL_DATA_UINT16)
+  - lutDesc->shape[0] != 17
+  - lutDesc->shape[3] != 3
+  - lutDesc->shape[2] != 17
+  - lutDesc == nullptr
+  - lutDesc->shape[1] != 17
+
+### weightDesc_ (6)
+  - weightDesc_->location != XNNL_MEM_DDR
+  - weightDesc_ == nullptr
+  - weightDesc_->layout != XNNL_TENSOR_NHWC
+  - weightDesc_->dataType != XNNL_DATA_FLOAT
+  - weightDesc_->shape == nullptr
+  - weightDesc_->rank != convDesc_->nbDims
+
+### padDesc_ (6)
+  - padDesc_ == nullptr
+  - padDesc_->pads == nullptr
+  - padDesc_->padsLen != 2 * padDesc_->axesLen
+  - padDesc_->axes == nullptr && padDesc_->axesLen > 0
+  - padDesc_->padsLen != 2 * rank
+  - padDesc_->mode != XNNL_PAD_MODE_WRAP
+
+### output_desc_ (6)
+  - output_desc_->rank != input_desc_->rank
+  - output_desc_->dataType != zero_point_desc_->dataType
+  - output_desc_->shape[shape_idx] != input_descs_[input_idx]->shape[shape_idx]
+  - output_desc_ == nullptr
+  - output_desc_->dataType != XNNL_DATA_FLOAT
+  - output_desc_->dataType != XNNL_DATA_INT8 && output_desc_->dataType != XNNL_DATA_UINT8 && output_desc_->dataType != XNNL_DATA_INT16 && output_desc_->dataType != XNNL_DATA_UINT16
+
+### dispatchDim (6)
+  - dispatchDim.x == 0 || dispatchDim.x > gridDim.x
+  - dispatchDim.y == 0
+  - dispatchDim.y == 0 || dispatchDim.y > gridDim.y
+  - dispatchDim.z == 0 || dispatchDim.z > gridDim.z
+  - dispatchDim.x == 0
+  - dispatchDim.z == 0
+
+### outputDescs (6)
+  - outputDescs[1]->dataType != XNNL_DATA_HALF
+  - outputDescs[1]->rank == 0
+  - outputDescs[0]->dataType != XNNL_DATA_HALF
+  - outputDescs[1] == nullptr
+  - outputDescs[0] == nullptr
+  - outputDescs[0]->rank == 0
+
+### table_ (6)
+  - table_->boxDim[1] != rmsScale_->boxDim[0]
+  - table_ == nullptr
+  - table_->boxDim[1] != rmsOut_->boxDim[1]
+  - (table_->dataType != XNNL_DATA_HALF)
+  - table_->rank != 2
+  - table_->location != XNNL_MEM_DDR
+
+### bias_ (6)
+  - bias_[XNNL_AIGC_O].data == nullptr
+  - bias_.size() != XNNL_AIGC_WEIGHT_NUM
+  - bias_[XNNL_AIGC_UP].data == nullptr
+  - bias_[XNNL_AIGC_GATE].data == nullptr
+  - bias_ == nullptr
+  - bias_[XNNL_AIGC_DOWN].data == nullptr

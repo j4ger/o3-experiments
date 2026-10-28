@@ -1,0 +1,36 @@
+# xnnl* surface harvested from /tmp/xnlm.dwarf
+
+functions: 17; types: 8
+
+## ?  (4)
+  void xnnlDecoderWeight(xnnlDecoderWeight *)
+  void xnnlEagletLmheadWeight(xnnlEagletLmheadWeight *)
+  void xnnlQuantParam(xnnlQuantParam *)
+  void xnnlTensorData(xnnlTensorData *)
+
+## xnnl.h  (7)
+  xnnlStatus_t xnnlCreate(xnnlHandle_t *, midaDevice_t)   // :(59)
+  xnnlStatus_t xnnlCreateTensorDescriptor(xnnlTensorDescriptor_t *)   // :(69)
+  xnnlStatus_t xnnlDestroy(xnnlHandle_t)   // :(65)
+  xnnlStatus_t xnnlDestroyTensorDescriptor(xnnlTensorDescriptor_t)   // :(93)
+  xnnlStatus_t xnnlSetTensorDescriptor(xnnlTensorDescriptor_t, const int *, const uint, const xnnlTensorLayout_t, const xnnlDataType_t, const xnnlMemLocation_t, const std::__ndk1::string)   // :(71)
+  xnnlStatus_t xnnlSetTensorDescriptorGroupwiseParam(xnnlTensorDescriptor_t, const uint32_t, const uint8_t *)   // :(85)
+  xnnlStatus_t xnnlSetTensorDescriptorQuantParam(xnnlTensorDescriptor_t, const bool, const bool, const void *, const void *, const xnnlDataType_t, const xnnlDataType_t)   // :(76)
+
+## xnnl_layers.h  (6)
+  xnnlStatus_t xnnlCreateEpilogueDescriptor(xnnlEpilogueDescriptor_t *)   // :(56)
+  xnnlStatus_t xnnlDestroyEpilogueDescriptor(xnnlEpilogueDescriptor_t)   // :(91)
+  xnnlStatus_t xnnlMatmulCreateGraph(const xnnlHandle_t, midaSubgraph_t, const xnnlTensorDescriptor_t, const void *, const xnnlTensorDescriptor_t, const void *, const xnnlTensorDescriptor_t, const void *, const void *, const void *, const xnnlTensorDescriptor_t, void *, const xnnlEpilogueDescriptor_t, const bool, const uint32_t)   // :(113)
+  xnnlStatus_t xnnlQuantizeCreateGraph(const xnnlHandle_t, midaSubgraph_t, const int32_t, const int32_t, const int32_t, const xnnlTensorDescriptor_t, const void *, const xnnlTensorDescriptor_t, const void *, const xnnlTensorDescriptor_t, const void *, const xnnlTensorDescriptor_t, void *, const uint32_t)   // :(309)
+  xnnlStatus_t xnnlRMSNormalizationCreateGraph(const xnnlHandle_t, midaSubgraph_t, const int, const xnnlTensorDescriptor_t, const void *, const xnnlTensorDescriptor_t, const void *, const xnnlTensorDescriptor_t, void *, const int, float, int)   // :(751)
+  xnnlStatus_t xnnlSetEpilogueDescriptor(xnnlEpilogueDescriptor_t, const xnnlEpilogueDataMode_t, const xnnlEpilogueDataMode_t, const xnnlActivation1Type_t, const xnnlEwOp_t, const xnnlEpilogueDataMode_t, const xnnlEpilogueDataMode_t, const xnnlEpilogueDataMode_t, const xnnlActivation2Type_t, const xnnlEpilogueDataMode_t, const xnnlEpilogueDataMode_t)   // :(75)
+
+## types (8)
+  structure_type xnnlDecoderWeight size=(0x01b8) members=15
+  structure_type xnnlEagletLmheadWeight size=(0x90) members=5
+  structure_type xnnlEpilogueDescriptor
+  structure_type xnnlHandle
+  structure_type xnnlQuantParam size=(0xa0) members=7
+  structure_type xnnlTensorData size=(0x30) members=4
+  structure_type xnnlTensorDescriptor
+  structure_type xnnlWeightPatch size=(0x10) members=2

@@ -1,0 +1,29 @@
+# local Android SDK / build tools
+poc/
+.local/
+
+# pulled vendor binaries, device dumps, models (not redistributable / large)
+artifacts/
+*.gguf
+*.onnx
+*.bell
+*.plan
+
+# build outputs
+**/build/
+*.apk
+*.idsig
+*.so.tmp
+
+# generated reverse-engineering output (decompiled vendor code)
+docs/generated/decomp/
+
+# third-party binaries that are fetched, not shipped
+apps/o3root/jniLibs/arm64-v8a/libksud.so
+
+# editor / OS
+.DS_Store
+*.swp
+
+# nix-direnv
+.direnv/
