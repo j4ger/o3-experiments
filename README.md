@@ -22,7 +22,7 @@ Planned: agent-style tool calling on top of the chat app.
 | Temporary root (no bootloader unlock, reboot clears it) | **works**, verified on `lhasa` / `OS4.0.26.0.XPNCNXM` |
 | NPU access from the `shell` domain with six targeted SELinux rules | **works**, `Enforcing` throughout |
 | `o3npu` driver (mida device, memory, subgraph) | **works** |
-| llama.cpp ggml backend | plumbing works (llama.cpp loads it and offloads `MUL_MAT`); **numerics still wrong** |
+| llama.cpp ggml backend | **correct on host** — perplexity matches the CPU backend; NPU execution still pending |
 | NPU matmul execution | not yet |
 
 ## Layout

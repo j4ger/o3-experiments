@@ -31,22 +31,54 @@ O3NPU: backend created
    `RESHAPE/VIEW/TRANSPOSE/PERMUTE`。
 2. **`CONT`/`CPY` 用 memcpy**：M1 的简化实现。
 
-## 未解决：数值不正确
+## 已解决：数值正确（2026-10-29）
 
-同一 prompt、`--temp 0`：
+同一 prompt、`--temp 0`，用 **perplexity** 做数值判据（比单条文本可靠）：
 
-| 后端 | 输出 |
-|---|---|
-| CPU | `Paris` |
-| O3NPU offload | `eleven Yangtze Yangtze Yangtze` |
+| 模型 | CPU | 经后端 | 结论 |
+|---|---|---|---|
+| SmolLM2-135M **F16** | PPL 1.2730 | **PPL 1.2729** | 一致 |
+| SmolLM2-135M **Q4_K_M** | PPL 1.2854 | PPL 1.2867 | 一致（量化权重回退 CPU） |
 
-**定位（下一步要验证）**：M1 的 matmul 按"ne0 连续"假设索引
-（`src0[k + m*K]`），但 ggml 的张量可能是**带步长的视图**（`nb[0]/nb[1]`），
-尤其 `src0` 是转置权重时。正确做法是全程用 `nb[]` 步长取值。
+### 根因：buffer 的内存偏移用错了
 
-其他待查项：
-- `CPY` 在类型不同（F32↔F16）或 dst 是视图时不能直接 `memcpy`；
-- 需要实现 buffer 的 `cpy_tensor`，让调度器能在后端间搬张量。
+`set_tensor` / `get_tensor` / `memset_tensor` 原本按
+`buffer->context + tensor->view_offs + off` 计算地址。但张量在 buffer 内的偏移
+存在 **`t->data`** 里；`view_offs` 只对视图张量有意义，普通张量是 0。
+于是**每次拷贝都写到了 buffer 开头**，把权重全写坏 —— 而 matmul 本身一直是对的。
+
+修正为 `t->data + off` 后，PPL 立刻与 CPU 一致。
+
+### 离线单测
+
+`tools/ggml-o3npu/selftest.cpp` 直接对拍我们的 matmul 与 `ggml_mul_mat`：
+
+```
+K=  64 M=  32 N=   8 a=f32 b=f32  max|diff|=2.38e-06  OK
+K= 576 M=  64 N=  16 a=f32 b=f32  max|diff|=1.72e-05  OK
+K= 576 M=  64 N=  16 a=f16 b=f32  max|diff|=6.00e-03  OK
+K= 576 M= 576 N=   4 a=f16 b=f32  max|diff|=4.98e-03  OK
+K=1536 M= 128 N=   4 a=f16 b=f16  max|diff|=6.10e-05  OK
+```
+
+（F16 的差异是 fp16 舍入，不是算法错误。）
+
+还有一个 ggml 的约束值得记住：**`ggml_mul_mat` 不接受转置的 src0**
+（`GGML_ASSERT(!ggml_is_transposed(a))` 直接中止），所以"权重是转置视图"
+这个假设从一开始就不成立。
+
+### 主机验证配方
+
+```bash
+cmake -B build-host -S llama.cpp -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=ON -DGGML_BACKEND_DL=ON \
+  -DGGML_CPU_ALL_VARIANTS=OFF -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF
+cmake --build build-host --target llama-cli llama-perplexity -j16
+g++ -shared -fPIC -O2 -std=c++17 -DGGML_BACKEND_DL -Iggml/include -Iggml/src -Iinclude \
+  -o libggml-o3npu.so tools/ggml-o3npu/ggml-o3npu.cpp -Lbuild-host/bin -lggml-base
+LD_LIBRARY_PATH=build-host/bin GGML_BACKEND_PATH=$PWD/libggml-o3npu.so \
+  build-host/bin/llama-perplexity -m model-f16.gguf -f text.txt -t 6 -c 128 --chunks 2 -ngl 99
+```
 
 ## 下一步
 
