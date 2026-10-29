@@ -118,7 +118,37 @@ switch (policyMode_) {
 - `"N=%d should transposed weight, out N bytes:%d is not divisible by %d"`
   → 当权重不转置（或需要转置）时，N 的字节数必须被某个对齐值整除
 
-## 5. 还没拿到的
+## 5. `PolicyFunc`：怎么选 kernel（反编译所得）
+
+决策相关的日志字符串就是文档：
+
+| 消息 | 含义 |
+|---|---|
+| `"specialized N not support sequence length > 64, current sequence len=%d"` | **specialized N 只支持 N ≤ 64** |
+| `"need to split K, not support yet"` | 需要切 K 时直接拒绝 |
+| `"split K not supported."` | 同上，`policyMode_ == 2` 的返回点 |
+| `"blkN_=%d N_=%d"` | 打印选出来的 block N |
+
+对应代码：
+
+```c
+if (*(int *)(this + 0x174) == 1 && 0x40 < *(uint *)(this + 0x148)) {
+    log("specialized N not support sequence length > 64, current sequence len=%d", ...);
+    ...
+}
+if (*(int *)(this + 0x174) == 2) {  /* split K */ ... }
+```
+
+即：
+
+- **N ≤ 64** → `policyMode_ = 1` → `createGraphSpecializedN`
+- **N > 64** → `createGraphSplitMN`
+- **K 超限需要切分** → 报错返回，不静默降级
+
+这解释了一个实际约束：**token 数（N）不超过 64 时走专用 kernel，超过则走 split-MN 路径**；
+两条路径的 kernel 与分块都不同。
+
+## 6. 还没拿到的
 
 - `ParamCheck` 的具体约束（哪些形状/对齐/类型被拒）。
 - `PolicyFunc` 如何决定 `policyMode_`（阈值、对齐要求）。
@@ -133,7 +163,7 @@ switch (policyMode_) {
 | `xnnlMatmulOpImpl::createGraphSpecializedN` | `0x6d53dc` |
 | `xnnlMatmulOpImpl::createGraphSplitMN` | `0x6d871c` |
 
-## 6. 复现命令
+## 7. 复现命令
 
 ```bash
 G=/nix/store/…-ghidra-12.1.4/lib/ghidra
