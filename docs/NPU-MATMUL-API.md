@@ -69,7 +69,56 @@ switch (policyMode_) {
 3. **split K 不支持**：K 很大时要自己切，否则 `policyMode_` 落到 2 直接失败。
 4. **形状不合法会在 `ParamCheck` 阶段返回非 0**，可以据此快速试错。
 
-## 4. 还没拿到的
+## 4. `ParamCheck` 的约束（反编译所得）
+
+每一条都是拒绝消息原文，说明输入必须满足：
+
+**布局与秩**
+
+- `inputTensorDesc_->layout != XNNL_TENSOR_NHWC` → 输入必须是 **NHWC**
+- `inputTensorDesc_->layout != weightTensorDesc_->layout`
+- `inputTensorDesc_->layout != outputTensorDesc_->layout` → 三者布局必须一致
+- `inputTensorDesc_->rank != weightTensorDesc_->rank` / `... != outputTensorDesc_->rank`
+  / `... != ewDataDesc_->rank` → **rank 必须全部相等**
+
+**形状**
+
+- `inputTensorDesc_->shape[0] != 1`、`shape[1] != 1` → 输入前两维必须为 1
+- `shape[1]` 在 input/weight/output 之间必须一致
+- `shape[2]` 在 input/weight/output 之间必须一致
+- `inputTensorDesc_->shape[3] != wK` → 输入末维 = K
+- `outputTensorDesc_->shape[3] != wN` → 输出末维 = N
+- `outputTensorDesc_->shape[0] != maxBatch`
+- `ewDataDesc_->shape[2] != outputTensorDesc_->shape[2]`
+
+**尺寸上限**
+
+- `M_ > kTmaGlobalStridesMNK`、`K_ > kTmaGlobalStridesMNK` → **M、K 均 ≤ 0x8000（32768）**
+
+**batch**
+
+- `minBatch < 1 || maxBatch < 1`
+- `maxBatch % minBatch != 0` → maxBatch 必须是 minBatch 的整数倍
+
+**可选 epilogue / ewData**
+
+- `ewDataDesc_ != nullptr` / `ewData_ != nullptr` / `ewData_ == nullptr` → 两者要么都给，要么都不给
+- 无 epilogue 时必须满足 `act1Op == XNNL_ACT1_TYPE_DISABLE`、
+  `act2Op == XNNL_ACT2_TYPE_DISABLE`、`actScaleMode == XNNL_EPL_DATA_MODE_DISABLE`、
+  `ewOp` 在 `[XNNL_EW_OP_DISABLE, XNNL_EW_OP_SUB]` 区间内
+
+**指针**
+
+- `handle_ == nullptr`、`graph_ == nullptr`、`input_ == nullptr`、`weight_ == nullptr`、
+  `output_ == nullptr`、`inputTensorDesc_ == nullptr`、`weightTensorDesc_ == nullptr`、
+  `outputTensorDesc_ == nullptr` → 全部非空检查
+
+**对齐**
+
+- `"N=%d should transposed weight, out N bytes:%d is not divisible by %d"`
+  → 当权重不转置（或需要转置）时，N 的字节数必须被某个对齐值整除
+
+## 5. 还没拿到的
 
 - `ParamCheck` 的具体约束（哪些形状/对齐/类型被拒）。
 - `PolicyFunc` 如何决定 `policyMode_`（阈值、对齐要求）。
@@ -84,7 +133,7 @@ switch (policyMode_) {
 | `xnnlMatmulOpImpl::createGraphSpecializedN` | `0x6d53dc` |
 | `xnnlMatmulOpImpl::createGraphSplitMN` | `0x6d871c` |
 
-## 5. 复现命令
+## 6. 复现命令
 
 ```bash
 G=/nix/store/…-ghidra-12.1.4/lib/ghidra
