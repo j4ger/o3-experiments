@@ -23,7 +23,7 @@ Planned: agent-style tool calling on top of the chat app.
 | NPU access from the `shell` domain with six targeted SELinux rules | **works**, `Enforcing` throughout |
 | `o3npu` driver (mida device, memory, subgraph) | **works** |
 | llama.cpp ggml backend | **correct on host** — perplexity matches the CPU backend; NPU execution still pending |
-| NPU matmul execution | not yet |
+| NPU matmul execution | **blocked at the firmware boundary** — the builder, graph and launch all succeed, but the firmware never runs a runtime-built graph. NBGs are compiler output, so bypassing the vendor compiler means writing one. See `docs/NPU-MATMUL-API.md`. |
 
 ## Layout
 
