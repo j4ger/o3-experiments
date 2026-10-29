@@ -84,12 +84,15 @@ int main(int argc, char ** argv) {
     auto device_get   = sym<int (*)(void **, uint32_t, void *)>(g_numd, "midaDeviceGet");
     auto device_rel   = sym<int (*)(void *)>(g_numd, "midaDeviceRelease");
     auto mem_alloc    = sym<int (*)(void **, void *, uint64_t, uint32_t, uint32_t, const char *)>(g_numd, "midaMemoryAlloc");
+    auto mem_get_ptr  = sym<void * (*)(void *)>(g_numd, "midaMemoryGetPtr");
+    auto mem_get_va   = sym<uint64_t (*)(void *)>(g_numd, "midaMemoryGetDeviceVa");
     auto sub_create   = sym<int (*)(void **, void *, void *)>(g_numd, "midaSubgraphCreate");
     auto graph_create = sym<int (*)(void **, void *)>(g_numd, "midaGraphCreate");
     auto graph_add    = sym<int (*)(void **, void *, const void *, uint32_t, void *)>(g_numd, "midaGraphAddSubgraphNode");
     auto graph_inst   = sym<int (*)(void **, void *)>(g_numd, "midaGraphInstantiate");
     auto stream_create= sym<int (*)(void **, void *, void *)>(g_numd, "midaStreamCreate");
     auto launch_graph = sym<int (*)(void *, void *, void *)>(g_numd, "midaStreamLaunchGraph");
+    auto launch_async = sym<int (*)(void *, void *, void *)>(g_numd, "midaStreamLaunchGraphAsync");
     auto sync         = sym<int (*)(void *)>(g_numd, "midaStreamSynchronize");
     auto err_name     = sym<const char * (*)(int)>(g_numd, "midaGetErrorName");
     auto err_str      = sym<const char * (*)(int)>(g_numd, "midaGetErrorString");
@@ -113,7 +116,9 @@ int main(int argc, char ** argv) {
     memset(&cfg, 0, sizeof cfg);
     void * dev = nullptr;
     int e = device_get(&dev, 0, &cfg);
-    printf("midaDeviceGet -> %d dev=%p\n", e, dev);
+    printf("midaDeviceGet -> %d", e);
+    if (e && err_name) printf(" [%s: %s]", err_name(e), err_str ? err_str(e) : "?");
+    printf(" dev=%p\n", dev);
     if (e || !dev) { printf("RESULT no_device\n"); return 4; }
 
     xnnlHandle_t h = nullptr;
@@ -151,13 +156,38 @@ int main(int argc, char ** argv) {
 
     uint8_t subcfg[0xa0];
     memset(subcfg, 0, sizeof subcfg);
+    /* the builder accepted plain host pointers, so allow both modes */
+    const bool host_mode = getenv("O3_HOST_PTR") != nullptr;
+    void * m_in = nullptr, * m_w = nullptr, * m_out = nullptr;
+    void * p_in = nullptr, * p_w = nullptr, * p_out = nullptr;
+    if (mem_alloc && !host_mode) {
+        int r1 = mem_alloc(&m_in,  dev, (uint64_t) K * M * 2 + 4096, 1, 0, "in");
+        int r2 = mem_alloc(&m_w,   dev, (uint64_t) K * N * 2 + 4096, 1, 0, "w");
+        int r3 = mem_alloc(&m_out, dev, (uint64_t) M * N * 2 + 4096, 1, 0, "out");
+        printf("midaMemoryAlloc tensors -> %d/%d/%d in=%p w=%p out=%p\n", r1, r2, r3, m_in, m_w, m_out);
+        if (r1 || r2 || r3) { printf("RESULT tensor_alloc_failed\n"); return 8; }
+        if (!mem_get_ptr || !mem_get_va) { printf("RESULT missing_memory_accessors\n"); return 8; }
+        p_in = mem_get_ptr(m_in); p_w = mem_get_ptr(m_w); p_out = mem_get_ptr(m_out);
+        uint64_t va_in = mem_get_va(m_in), va_w = mem_get_va(m_w), va_out = mem_get_va(m_out);
+        printf("cpu ptr in=%p w=%p out=%p\n", p_in, p_w, p_out);
+        printf("device va in=0x%llx w=0x%llx out=0x%llx\n",
+               (unsigned long long) va_in, (unsigned long long) va_w, (unsigned long long) va_out);
+        memcpy(p_in,  ah.data(), (size_t) K * M * 2);
+        memcpy(p_w,   bh.data(), (size_t) K * N * 2);
+        memset(p_out, 0, (size_t) M * N * 2);
+        m_in = (void *) va_in; m_w = (void *) va_w; m_out = (void *) va_out;
+    } else {
+        m_in = ah.data(); m_w = bh.data(); m_out = outh.data();
+        p_in = ah.data(); p_w = bh.data(); p_out = outh.data();
+    }
+
     void * sub = nullptr;
     e = sub_create(&sub, dev, subcfg);
     printf("midaSubgraphCreate -> %d sub=%p\n", e, sub);
     if (e || !sub) { printf("RESULT subgraph_failed\n"); return 7; }
 
-    e = matmul(h, sub, di, ah.data(), dw, bh.data(), nullptr, nullptr, nullptr, nullptr,
-               dout, outh.data(), epl, false, 0);
+    e = matmul(h, sub, di, m_in, dw, m_w, nullptr, nullptr, nullptr, nullptr,
+               dout, m_out, epl, false, 0);
     printf("xnnlMatmulCreateGraph -> %d\n", e);
     if (e != 0) { printf("RESULT builder_status_%d\n", e); return 8; }
 
@@ -193,35 +223,51 @@ int main(int argc, char ** argv) {
         fflush(stdout);
         if (ra != 0 || ri != 0 || !gexec) continue;
 
-        uint8_t scfg[0x0c];
-        memset(scfg, 0, sizeof scfg);
-        void * stream = nullptr;
-        int rs = stream_create(&stream, dev, scfg);
-        if (rs != 0 || !stream) { printf("  stream create -> %d\n", rs); continue; }
+        for (uint32_t stype = 0; stype <= 2; stype++) {
+            uint8_t scfg[0x0c];
+            memset(scfg, 0, sizeof scfg);
+            memcpy(scfg + 0x04, &stype, 4);
+            void * stream = nullptr;
+            int rs = stream_create(&stream, dev, scfg);
+            if (rs != 0 || !stream) { printf("  stream(type=%u) create -> %d\n", stype, rs); continue; }
 
-        uint8_t lcfg[0xb8];
-        memset(lcfg, 0, sizeof lcfg);
-        uint32_t cu = 1, pf = 0, to = 10000;
-        memcpy(lcfg + 0x00, &cu, 4);
-        memcpy(lcfg + 0x04, &pf, 4);
-        memcpy(lcfg + 0x0c, &to, 4);
-        const char * nm = "mm";
-        memcpy(lcfg + 0x10, &nm, sizeof nm);
-        int rl = launch_graph(gexec, lcfg, stream);
-        printf("  launch_graph -> %d", rl);
-        if (rl != 0 && err_name) printf(" [%s: %s]", err_name(rl), err_str ? err_str(rl) : "?");
-        printf("\n");
-        fflush(stdout);
-        if (rl == 0) {
-            if (sync) printf("  sync -> %d\n", sync(stream));
-            double maxdiff = 0.0;
-            for (size_t i = 0; i < ref.size(); i++) {
-                double d = std::fabs((double) ref[i] - (double) outh[i]);
-                if (d > maxdiff) maxdiff = d;
+            uint8_t lcfg[0xb8];
+            memset(lcfg, 0, sizeof lcfg);
+            uint32_t cu = 1, pf = 0;
+            uint32_t to = getenv("O3_FW_TO") ? (uint32_t) strtoul(getenv("O3_FW_TO"), nullptr, 0) : 10000;
+            memcpy(lcfg + 0x00, &cu, 4);
+            memcpy(lcfg + 0x04, &pf, 4);
+            memcpy(lcfg + 0x0c, &to, 4);
+            float ddr = 1.0f;
+            memcpy(lcfg + 0x08, &ddr, 4);
+            const char * nm = "mm";
+            memcpy(lcfg + 0x10, &nm, sizeof nm);
+
+            int rl = launch_graph(gexec, lcfg, stream);
+            printf("  launch(type=%u) -> %d", stype, rl);
+            if (rl != 0 && err_name) printf(" [%s]", err_name(rl));
+            printf("\n");
+            fflush(stdout);
+            if (rl != 0 && launch_async) {
+                int ra = launch_async(gexec, lcfg, stream);
+                printf("  launch_async(type=%u) -> %d", stype, ra);
+                if (ra != 0 && err_name) printf(" [%s]", err_name(ra));
+                printf("\n");
+                fflush(stdout);
+                rl = ra;
             }
-            printf("  max|NPU-CPU| = %.6g %s\n", maxdiff, maxdiff < 2e-2 ? "MATCH" : "MISMATCH");
-            printf("RESULT %s\n", maxdiff < 2e-2 ? "ok" : "numeric_mismatch");
-            return 0;
+            if (rl == 0) {
+                if (sync) printf("  sync -> %d\n", sync(stream));
+                const _Float16 * got = (const _Float16 *) p_out;
+                double maxdiff = 0.0;
+                for (size_t i = 0; i < ref.size(); i++) {
+                    double d = std::fabs((double) ref[i] - (double) got[i]);
+                    if (d > maxdiff) maxdiff = d;
+                }
+                printf("  max|NPU-CPU| = %.6g %s\n", maxdiff, maxdiff < 2e-2 ? "MATCH" : "MISMATCH");
+                printf("RESULT %s\n", maxdiff < 2e-2 ? "ok" : "numeric_mismatch");
+                return 0;
+            }
         }
     }
 

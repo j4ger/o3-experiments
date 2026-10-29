@@ -269,3 +269,45 @@ midaStreamLaunchGraph -> 14 [midaErrorLaunchFailure: launch task error]
 4. 该 shape 组合没有可用的 kernel，需要换更大的 M/N。
 
 已确认**不是**的原因：形状、dtype、布局、epilogue、graph 组装、l2b/va/stack 参数。
+
+## 10. 第二轮实机（重启后）
+
+重启清掉了卡死的固件状态，`midaDeviceGet` 恢复正常。这轮拿到两个新事实：
+
+### 10.1 启动要用异步 + stream type 1
+
+```
+launch(type=0)      -> 10 [midaErrorFWTimeout]
+launch_async(type=0) -> 6 [midaErrorNotSupported]
+launch(type=1)      -> 6 [midaErrorNotSupported]
+launch_async(type=1) -> 0        ← 唯一被接受的组合
+sync                 -> 10 [midaErrorFWTimeout]
+```
+
+即：**同步启动不被支持，必须 `midaStreamLaunchGraphAsync` + `midaStreamConfig.type = 1`**。
+但随后 `midaStreamSynchronize` 超时，输出仍是垃圾值 → 任务没有真正完成。
+
+### 10.2 mida 堆内存不暴露设备 VA
+
+| flag | CPU 指针 | 设备 VA | fd |
+|---|---|---|---|
+| 0 | 0 | 0 | 有效 |
+| 1 | 有效 | **0** | 有效 |
+| 2 | 0 | 0 | 有效 |
+
+所以 `midaMemoryAlloc` 拿不到可用于建图的设备地址；只有 dma-buf fd。
+把 VA=0 传给 `xnnlMatmulCreateGraph` 会被 ParamCheck 拒绝（返回 1）。
+
+### 10.3 当前状态与剩余未知
+
+- 传 **host 指针**：builder 返回 0，但 async launch 后 sync 超时、结果错。
+- 传 **mida VA**：builder 返回 1（VA 恒为 0）。
+
+结论：**卡点是内存语义**——xnnl 需要的不是裸 host 指针，也不是
+`midaMemoryGetDeviceVa`（拿不到），而是某种由它自己管理的缓冲。最可能藏在
+`createGraphSplitMN` 里（该函数太大，Ghidra 一小时内没出结果）。
+
+下一步建议：
+1. 用更长的 Ghidra 预算（或只反编译 `createGraphSplitMN` 的前 200 条指令）看它如何
+   处理 `input_`/`weight_`/`output_`（对象偏移 0x28/0x50/0x58）；
+2. 或看 `libxnn_runtime.so` 的 `Xnn_ContextExecute` 如何准备内存并调用 mida。
