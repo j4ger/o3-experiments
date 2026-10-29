@@ -530,3 +530,62 @@ vxCreateContext -> vxCreateGraph -> 建 4 个 tensor -> vxFullyConnectedLayer
 它还会在运行时用 `vxnneGetTypeSize` **自己探测 VX_TYPE_* 的枚举值**，避免猜错类型常量。
 
 判定标准不变：`vxVerifyGraph` 返回 0 说明编译成功，`max|NPU-CPU|` 变小说明真的跑了。
+
+## 15. 实机验证：OpenVX 编译器在这台设备上不可用
+
+第 14 节说"编译器就在 libOpenVX 里、可以直接调"——**这个判断对了一半**：
+编译器代码确实在，但它的 HAL 在这台设备上初始化不了。
+
+### 15.1 崩溃点（tombstone 原始记录）
+
+```
+signal 11 (SIGSEGV), fault addr 0x0 (read)
+#00 gcoHAL_DeviceControl_NoKernel+1368        libGAL.so
+#01 _QueryHardwareIdAndOptions+216            libGAL.so
+#02 gcoHARDWARE_ConstructEx+3112              libGAL.so
+#03 gcoVX_CreateHW+160                        libGAL.so
+#04 gcoVX_Construct+460                       libGAL.so
+#05 gcoVX_SwitchContext+176                   libGAL.so
+#06 vxCreateContext+328                       libOpenVX.so
+#07 main                                      probe_openvx_matmul
+```
+
+`vxCreateContext` → `gcoVX_SwitchContext` → `gcoVX_CreateHW` → `gcoHARDWARE_ConstructEx`
+→ `_QueryHardwareIdAndOptions` → **`gcoHAL_DeviceControl_NoKernel` 空指针**。
+
+### 15.2 原因
+
+`libOpenVX` / `libGAL` 是 **Vivante GC** 平台的构建，HAL 启动时要查询 GC 硬件；
+而这台设备是 **Mali GPU**（`/dev/mali0`，没有 `/dev/galcore`）。
+HAL 退到 "NoKernel" 路径，又因为没有预留连续视频内存而解引用空指针。
+
+`strings libGAL.so` 里能看到相关开关：`VIV_VX_SKIP_SHADER`、
+`VIV_VX_NN_ACTIVE_CORE_COUNT`、`VIV_DEBUG`、`gcoHAL_NoKernel_IsFeatureAvailable`，
+以及 `"failed to allocate linear video memory for No Kernel driver"` ——
+说明 NoKernel 模式需要一块预留给 GPU 的连续内存，这台机器没有。
+
+### 15.3 那设备上到底怎么跑 NPU？
+
+`libNPURuntime.so` 的符号给出了答案：
+
+```
+npu::umd::Network::Create(Device*, void* buffer, uint32_t size, network_config*, Network**)
+npu::umd::Task::Create(...)
+npu::umd::Stream::Create(...)
+```
+
+`Network::Create` 接收**一块 buffer**——那就是 **NBG 镜像**。
+也就是说设备侧的流程是：**加载已编译好的 NBG → 建 Network/Task → Stream 执行**，
+编译不在这台手机上做。
+
+### 15.4 最终判定（修正版）
+
+| 环节 | 能否在设备上完成 | 证据 |
+|---|---|---|
+| 加载并执行 NBG | ✅ 可以 | `Network::Create(buffer, size)`；mida 链路已打通 |
+| 用 OpenVX 编译图 → NBG | ❌ 不行 | `vxCreateContext` 在 GC HAL 处空指针（tombstone 如上） |
+| 编译 NBG | ❌ 需要 PC 端 VeriSilicon 工具链 | `.nb` 模型随固件下发 |
+
+**所以：能在设备上"跑" NBG，但不能在设备上"生成" NBG。**
+要让 NPU 跑我们自己的模型，缺的仍然是**离线编译这一步**，
+而且现在有 tombstone 证明这不是配置问题，是 HAL 与硬件不匹配。

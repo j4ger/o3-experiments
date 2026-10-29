@@ -52,6 +52,10 @@ int main(int argc, char ** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("== probe_openvx_matmul K=%d N=%d ==\n", K, N);
 
+    /* libOpenVX needs libGAL and libVSC loaded first: vxCreateContext calls
+     * gcoHAL_GetPLS, which crashes when the HAL libraries are not resident. */
+    printf("preload libGAL=%p\n", dlopen("/vendor/lib64/libGAL.so", RTLD_NOW | RTLD_GLOBAL));
+    printf("preload libVSC=%p\n", dlopen("/vendor/lib64/libVSC.so", RTLD_NOW | RTLD_GLOBAL));
     void * h = dlopen("/vendor/lib64/libOpenVX.so", RTLD_NOW | RTLD_GLOBAL);
     printf("dlopen libOpenVX=%s\n", h ? "ok" : dlerror());
     if (!h) return 2;
