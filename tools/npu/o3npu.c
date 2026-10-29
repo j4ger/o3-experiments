@@ -527,7 +527,8 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     const int in_dims[4]  = { 1, 1, 1, K };
     int       w_dims[4]   = { 1, 1, K, M };
     const int out_dims[4] = { T, 1, 1, M };
-    if (m->transposed_w) {
+    if (m->transposed_w && env_int("O3NPU_WDIMS_MK", 1)) {
+        /* transposed weight: the descriptor may need {1,1,M,K} instead */
         w_dims[2] = M;
         w_dims[3] = K;
     }
