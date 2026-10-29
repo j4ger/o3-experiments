@@ -621,3 +621,8 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     a->sub_destroy(sub);
     return 0;
 }
+
+/* exposed for the host unit test only */
+float o3npu_fp16_to_fp32(uint16_t h) {
+    return fp16_to_fp32(h);
+}
