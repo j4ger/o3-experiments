@@ -353,3 +353,54 @@ max|NPU-CPU| = 8.24  （输出仍是全零，任务从未执行）
 3. kernel 需要额外加载步骤（xnnl 内部或 runtime 的 plan 流程）。
 
 判定方法已经具备：只要 `sync` 返回 0 且 `max|NPU-CPU|` 变小，就说明任务真的跑了。
+
+## 12. 从设备拉下来的配置（2026-10-30，关机前）
+
+### 12.1 `/vendor/etc/npu/` 的结构
+
+```
+/vendor/etc/npu/
+├── compiler/VIP9000NANOQI_MP6_PID0X1000002B.config   (140 B)
+├── config/aon/config.json                            (567 B)
+└── models/aon/*.nb                                    (106 MB，7 个模型)
+```
+
+`config.json`：
+
+```json
+{ "modelPath":   { "1": ".../FD_cipher.nb", "2": ".../Gaze_cipher.nb" },
+  "modelPath_o3": { "0": ".../FD_cipher.nb", ... "6": ".../QR_cipher.nb" } }
+```
+
+`compiler/*.config`：
+
+```
+chipModel    = 0x00009000;   chipRevision = 0x00009200;
+productID    = 0x0509000b;   ecoID        = 0x60000000;
+customerID   = 0x1000002b;
+```
+
+### 12.2 这解释了什么
+
+**厂商在这台设备上跑的是预编译的 `.nb`（NBG）模型**，不是运行时现搭的图。
+`models/aon/*.nb` 是 106 MB 的二进制网络，由 VeriSilicon 的编译器离线生成。
+
+由此可以解释我们卡住的原因：
+
+- `xnnlMatmulCreateGraph` 能建图、能实例化，但**固件可能期待一个随 NBG 一起下发的
+  kernel/program**，而运行时现搭的 matmul 没有这个 program，于是任务提交后
+  固件不执行（`midaErrorFWTimeout`），输出保持全零。
+- `libNBGlinker.so`、`vsi_nn_GenerateNBG` 这些符号正是 NBG 流程的一部分。
+
+### 12.3 对路线的直接影响
+
+| 路线 | 可行性 |
+|---|---|
+| 运行时用 xnnl 现搭 matmul 图 | **受阻**：缺 kernel program，固件不执行 |
+| 用厂商 NBG 模型（`.nb`） | 需要 VeriSilicon 编译器（离线工具，未获得） |
+| 用 `libxnn_runtime` 加载 `xnn.plan` | 需要 plan 文件（同样是编译产物） |
+| CPU（ggml） | **已可用**，184 t/s |
+
+也就是说：**"让 NPU 跑任意我们自己的模型"目前卡在"缺厂商编译器"这一层**，
+而不是卡在 API 细节上。继续深挖 xnnl 也许能绕过（例如手工构造 kernel program），
+但那是另一个量级的工程量。
