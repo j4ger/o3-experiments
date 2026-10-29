@@ -311,3 +311,45 @@ sync                 -> 10 [midaErrorFWTimeout]
 1. 用更长的 Ghidra 预算（或只反编译 `createGraphSplitMN` 的前 200 条指令）看它如何
    处理 `input_`/`weight_`/`output_`（对象偏移 0x28/0x50/0x58）；
 2. 或看 `libxnn_runtime.so` 的 `Xnn_ContextExecute` 如何准备内存并调用 mida。
+
+## 11. 设备内存路径打通（但仍不执行）
+
+### 11.1 唯一能拿到设备 VA 的方式
+
+堆内存（`midaMemoryAlloc` flag 0/1/2）的 `midaMemoryGetDeviceVa` **永远是 0**。
+可行的是"预留地址 + 把 dma-buf 绑上去"：
+
+```c
+midaMemoryAlloc(&mem, dev, size, 1, 0, name);      // CPU 指针 + fd
+midaMemoryGetPtr(mem);                              // 用于填数据
+fd = midaMemoryGetFd(mem);
+midaAddressReserve(&addr, dev, size, 2, 0);        // type=2 才成功
+va = midaAddressGetDeviceVa(addr);                  // 非零，例如 0x456000
+midaMemoryMapWithAddr(&mapped, fd, size, 0, addr);  // 同一 fd 绑定到该 VA
+```
+
+`midaAddressReserve` 的第一次参数是 type：**只有 `(2, 0)` 成功**，
+其他组合（0/1/4096 等）都返回 1。地址空间按预留递增（0x1000 → 0x101000 → 0x501000）。
+`midaMemoryAllocWithAddr` 在这个设备上**必然 SIGSEGV**，不要用。
+
+### 11.2 进展
+
+```
+reserve → va / map → 都成功
+xnnlMatmulCreateGraph(in=0x456000 w=0x458000 out=0x459000) -> 0
+midaGraphAddSubgraphNode -> 0, midaGraphInstantiate -> 0
+midaStreamLaunchGraphAsync(type=1) -> 0
+midaStreamSynchronize -> 10 [midaErrorFWTimeout]
+midaStreamLaunchGraphAsyncWithCallback -> 0, 回调从未触发
+max|NPU-CPU| = 8.24  （输出仍是全零，任务从未执行）
+```
+
+### 11.3 结论
+
+建图与提交都成功了，**固件没有执行任务**。剩下的怀疑：
+
+1. `midaLaunchConfig.stripe_names[32]`（每项 5 字节）留空——厂商流程里这些名字应当填上；
+2. `midaSubgraphExecParams` 的 `l2bSize`/`vaSize` 仍为 0（我们扫过 0/1MB/2MB，但也许要匹配真实需求）；
+3. kernel 需要额外加载步骤（xnnl 内部或 runtime 的 plan 流程）。
+
+判定方法已经具备：只要 `sync` 返回 0 且 `max|NPU-CPU|` 变小，就说明任务真的跑了。
