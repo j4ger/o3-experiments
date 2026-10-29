@@ -589,3 +589,172 @@ npu::umd::Stream::Create(...)
 **所以：能在设备上"跑" NBG，但不能在设备上"生成" NBG。**
 要让 NPU 跑我们自己的模型，缺的仍然是**离线编译这一步**，
 而且现在有 tombstone 证明这不是配置问题，是 HAL 与硬件不匹配。
+
+---
+
+## 16. 更正（决定性）：不需要编译器 —— kernel 是随库预编译下发的
+
+第 13–15 节有一个共同的错误前提：**把 NBG / `xnn.plan` / `.bell` 当成了
+NPU 唯一的执行形式**。它不是。NBG 只是**可选的 AOT 交付格式**；`libxnnl.so`
+本身就把编译好的 kernel 带在身上。
+
+### 16.1 证据：`libxnnl.so` 内嵌 64 个 ELF kernel 模块
+
+对 `libxnnl.so` 扫描 ELF 魔数并按节头解析，得到 **66 个 ELF 镜像**：
+1 个是共享库本身，1 个是普通对象，**剩下 64 个是 kernel 模块**。
+每个模块都有：
+
+| 节 | 含义 |
+|---|---|
+| `.k_text.<Kernel>` | 编译好的 VIP9000 代码 |
+| `.k_abi.<Kernel>` | 参数 ABI 描述 |
+| `.k_arg.<Kernel>` | 参数布局（部分模块有） |
+| `.k_info.<Kernel>` | 启动几何 / 元数据 |
+
+合计 **686 个 kernel**（686 个 `.k_text` 与 686 个 `.k_abi` 一一对应）。
+
+复现：
+
+```bash
+node tools/npu/list-kernels.mjs artifacts/vendor/libxnnl.so
+```
+
+输出摘要：
+
+```
+kernel modules  64
+kernel names    686
+  gemm/matmul    80
+  bmm/attention  13
+  rmsnorm        35
+  layernorm      48
+  softmax        45
+  rope           16
+  quant         105
+  activation     62
+  conv            5
+  pool           26
+  pad/tile/copy   9
+```
+
+matmul 相关的模块：
+
+```
+0x0826db   10  llmBmmSplitMNKernel_ViTQkv_DSMEM128, llmBmmSplitMNKernel_DSMEM128, ...
+0x0f0ac3   62  llmGemmSplitMNKernel_ViTPostAttn, gemmSplitMNEpilogueFusedKernel, ...
+0x13553b   16  OneDispatchGemmOpHighPrecisionKernel, ...
+0x416033    3  MatmulOpPerChnSplitKernel, MatmulOpPerChnSplitKernelL1B, MatmulOpKernelSpecializedN
+0x41bb83   10  MatmulRopeQuant_F32_S16_General, ...
+```
+
+`MatmulOpKernelSpecializedN` 正是第 5 节 `policyMode_ == 1`（N ≤ 64）选中的那个
+kernel，它就在 `0x416033` 这个模块里。
+
+### 16.2 加载路径
+
+`libxnnl.so` 不直接依赖 `libxnumd.so`（`DT_NEEDED` 里没有它），而是
+`dlopen("libxnumd.so")` + `dlsym`。相关字符串：
+
+```
+Created handle with %u discrete ELF modules
+Failed to load discrete ELF [%u] '%s': umd status=%d
+kernel '%s' not found in any discrete module
+handle_->discreteModules.empty()
+midaModuleLoadData
+midaModuleGetFunction
+```
+
+以及源文件路径（安卓构建系统的生成规则）：
+
+```
+out/soong/.intermediates/vendor/xring/ai/xnnl/compile_discrete_mida_genrule/
+    gen/bellv100/src/core/mida_elf.cpp
+```
+
+`libxnnl.so` 还导出专门用来枚举这些模块的 API：
+
+```
+xnnlGetDiscreteElfCount / xnnlGetDiscreteElfName / xnnlGetDiscreteElfData
+xnnlGetDiscreteElfSize  / xnnlGetUsedModules
+```
+
+**结论：编译发生在小米构建时（`compile_discrete_mida_genrule`），
+设备上只做 `midaModuleLoadData` 加载。** 设备端不需要任何编译器。
+
+### 16.3 为什么第 15 节的 tombstone 不影响这条路径
+
+tombstone 发生在 `vxCreateContext` → `gcoVX_CreateHW` → `gcoHAL_DeviceControl_NoKernel`，
+那是 **`libOpenVX` / `libGAL` 的 Vivante GC 图编译器**，只服务于
+"OpenVX 图 → NBG" 这条 AOT 路线。xnnl 完全不经过 `libOpenVX` / `libGAL`：
+它依赖 `libc++/libc/libm/libdl/liblog`，运行时只和 `libxnumd.so` 说话。
+
+两条路线互不相干：
+
+| 路线 | 依赖 | 状态 |
+|---|---|---|
+| OpenVX 图 → NBG | `libOpenVX` → `libGAL` → GC HAL | ❌ 在这台 Mali 设备上初始化失败 |
+| xnnl kernel 节点 → mida | `libxnnl`（内嵌 ELF）→ `libxnumd` | ✅ 库可用，kernel 已加载 |
+
+### 16.4 三条执行路径，只有第一条需要"编译器"
+
+| # | 路径 | 是否需要编译器 |
+|---|---|---|
+| A | AOT：`vxProcessGraph` → NBG，或 `sample.bell` / `xnn.plan` → `Xnn_CreatePlanFromFile` | 需要（厂商已把 `sample.bell` 编好） |
+| B | 运行时图：`xnnl*CreateGraph` → `midaGraph*`，或 `Xnn_EngineCreateContext` → `Xnn_ContextExecute` | **不需要** |
+| C | 厂商 LLM 引擎：`XNLM_Runtime_createModel(config.json + fp16 .bin)` → `XNLM_Model_run` | **不需要** |
+
+C 的证据：`libxnlm.so` 的符号与字符串里有完整的模型加载链路
+（`WeightImpl::parseConfig/parseLayer/parseEmbedding/parseLMHead/loadFp16Weight`、
+`XNLM_KVCache_*`、`XNLM_Model_run`），配置键是通用的 transformer 字段
+（`hidden_size`、`intermediate_size`、`num_attention_heads`、`num_hidden_layers`、
+`vocab_size`、`model_type`）。它按层建 xnnl 子图并直接跑，
+**输入是 config + fp16 权重，不是 NBG**。
+
+一个限制：`libxnlm.so` 的 `model_type` 目前只注册了两个实现
+（`Qwen2_5_vl`、`Qwen3`/`Qwen3VL`），所以 C 路线只对这两族模型开箱可用。
+
+### 16.5 对 ggml 的直接结论
+
+**不需要编译器。**
+
+需要说清的是当前 `tools/ggml-o3npu/ggml-o3npu.cpp` 的真实状态：
+`o3npu_matmul` 是一个**标量 CPU 三重循环**，没有调用任何 NPU。
+PPL 1.2729 证明的是 ggml 动态后端的接线、buffer 偏移与算子分派是对的，
+**不是 NPU 执行**。所以"ggml 跑通"和"ggml 用上 NPU"是两件事：
+
+| 问题 | 答案 |
+|---|---|
+| ggml 能跑吗 | 能，CPU 后端，`-t 6`，SmolLM2-135M Q4 323/184 t/s |
+| ggml 上 NPU 需要编译器吗 | **不需要**，kernel 已在 `libxnnl.so` 里 |
+| 那现在缺什么 | **执行路径没对齐**：探针 `xnnlMatmulCreateGraph=0`、`graph_instantiate=0`、`launch_async=0`，但 `sync=10 (FWTimeout)`，输出全零 |
+
+`FWTimeout` 是 launch 之后固件不执行，属于启动/参数问题，与编译无关。
+可疑点（按优先级）：
+
+1. `midaGraphAddSubgraphNode` 的 `params` 结构（探针里是 `uint8_t snp[0x28]` 手工拼的）
+   只把 subgraph 指针放在 offset 0，其余字段是猜的；
+2. `midaStreamCreate` 的 config（`uint8_t scfg[0x0c]`，type 放在 offset 4）同样是猜的；
+3. 走 `npu::umd` 而不是裸 mida：`libxnumd` 里有 `BootDriver::Boot/Init/IsBoot`
+   与 `DeviceImpl::Init(unsigned int, midaDeviceConfig*)`，RPMsg 启动日志是
+   `---------start boot---------` / `hpc-cdev boot success!!!!!!!`；
+4. `midaGraphInstantiate` 之后可能还需要 `midaGraphExecGetSubgraphExec` /
+   `midaGraphExecUpdate` 再 launch。
+
+### 16.6 下一步（设备回来后按序验证）
+
+1. 拉全依赖：`libxninfer.so`、`libmisight.so`、`libbase.so`、`libmnne_crypto.so`
+   —— 它们出现在 `libxnn_runtime.so` / `libxnn.so` 的 `DT_NEEDED` 里，本地还没有；
+2. **先用厂商已编好的 `sample.bell` 打通执行**：
+   `Xnn_CreateRuntime` → `Xnn_CreatePlanFromFile("sample.bell")` →
+   `Xnn_CreateDevice` → `Xnn_EngineCreateContext` → `Xnn_ContextExecute`。
+   这一步跑通就证明"设备 + 驱动 + 我们的调用"整条链没问题；
+3. 再确认 `Xnn_EngineCreateContext` 的入参：若它接受 xnnl 构建的图，
+   就用它替代手工拼 mida 参数；若不接受，则回到 mida 但按
+   `npu::umd::SubgraphExecImpl` 的字段布局补齐 launch 参数；
+4. 通了之后，`GGML_OP_MUL_MAT` 才有意义接到 NPU。
+
+### 16.7 一句话
+
+**"需要编译器"这个结论只对 NBG 整网交付成立；对 xnnl/xnlm/ggml 全都不成立。**
+kernel 是随 `libxnnl.so` 预编译下发的，686 个，覆盖 matmul / attention / norm /
+softmax / rope / quant / activation 全套。之前卡住的是**执行**，不是**编译**。

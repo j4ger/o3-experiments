@@ -110,6 +110,11 @@ GGUF 支持的是"llama.cpp 已实现的架构"（Llama/Qwen/Gemma/Phi…）。
 | **Vivante Acuity / NBG** | `vsi_nn_*` 图 API（`libovxlib.so`，5.7 MB）+ `nbg_*`（`libNBGlinker.so`）+ VXC 二进制 | ✅ `vsi_nn_GenerateNBG` 在设备上 | `libovxlib`/`libNBGlinker` 是 `same_process_hal_file`（可读）；但公共入口 `libOpenVXU.so` **连 root 都读不了** |
 | **我们自己的 mida 直驱** | `o3npu`（`libxnumd` → `/dev/hpc-cdev`） | — | ✅ 已验证可用 |
 
+> 注意："`xnn.plan` 需要编译器"只对 **plan 这种 AOT 容器**成立。
+> `libxnnl.so` 另带一条**运行时构图**路径：686 个 kernel 已预编译内嵌在库里
+> （64 个 ELF 模块），`xnnlCreate` 用 `midaModuleLoadData` 加载，不需要任何编译器。
+> 详见 `NPU-MATMUL-API.md` §16；枚举工具 `tools/npu/list-kernels.mjs`。
+
 证据：
 - `libxnn_runtime.so` 里有 `Failed to read xnn.plan`、"Topo order of subgraphs retrieved from xnn.plan"、`Xnn_ContextEnqueue/Execute/GetTensorAddress/SetInputShape`。
 - `libxnnapi.so`（35 KB）只 dlopen `libxnn_runtime.so`，是"加载 plan → 设张量地址 → Run"的薄封装。

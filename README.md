@@ -23,7 +23,7 @@ Planned: agent-style tool calling on top of the chat app.
 | NPU access from the `shell` domain with six targeted SELinux rules | **works**, `Enforcing` throughout |
 | `o3npu` driver (mida device, memory, subgraph) | **works** |
 | llama.cpp ggml backend | **correct on host** — perplexity matches the CPU backend; NPU execution still pending |
-| NPU matmul execution | xnnl builds and launches but the firmware never runs it. The vendor compiler exists in `libOpenVX.so`, but its Vivante GC HAL cannot initialise on this Mali-based device (`vxCreateContext` null-derefs in `gcoHAL_DeviceControl_NoKernel`), so NBGs must be compiled off-device; the device-side path is `npu::umd::Network::Create(buffer, size)` loading a prebuilt NBG. See `docs/NPU-MATMUL-API.md`. |
+| NPU matmul execution | xnnl builds the graph and mida accepts the launch, but the firmware never runs it (`midaErrorFWTimeout`). **This is not a compiler problem**: `libxnnl.so` embeds 64 precompiled ELF kernel modules / 686 kernels, loaded by `xnnlCreate` through `midaModuleLoadData`; only the optional NBG path needs a compiler, and that path's Vivante GC HAL cannot initialise on this Mali device. See `docs/NPU-MATMUL-API.md` §16. |
 
 ## Layout
 
