@@ -87,7 +87,6 @@ int main(int argc, char ** argv) {
     if (!h_numd || !h_xnnl) return 2;
 
     auto device_get   = sym<int (*)(void **, uint32_t, void *)>(h_numd, "midaDeviceGet");
-    auto device_rel   = sym<int (*)(void *)>(h_numd, "midaDeviceRelease");
     auto addr_reserve = sym<int (*)(void **, void *, uint64_t, uint32_t, uint32_t)>(h_numd, "midaAddressReserve");
     auto addr_va      = sym<uint64_t (*)(void *)>(h_numd, "midaAddressGetDeviceVa");
     auto mem_alloc    = sym<int (*)(void **, void *, uint64_t, uint32_t, uint32_t, const char *)>(h_numd, "midaMemoryAlloc");
