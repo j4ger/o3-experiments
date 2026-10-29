@@ -154,6 +154,8 @@ if (*(int *)(this + 0x174) == 2) {  /* split K */ ... }
 - `PolicyFunc` 如何决定 `policyMode_`（阈值、对齐要求）。
 - `createGraphSplitMN` 内部如何把对象翻译成 mida 节点（真正的图构建）。
 
+`ParamCheck` 与 `PolicyFunc` 已完成；`createGraph*` 未完成。
+
 这三项都可以用同一套离线流程继续：Ghidra 快照 + 按地址反编译。
 
 | 函数 | Ghidra 地址 |
@@ -161,7 +163,7 @@ if (*(int *)(this + 0x174) == 2) {  /* split K */ ... }
 | `xnnlMatmulOpImpl::ParamCheck` | `0x6cf8c0` |
 | `xnnlMatmulOpImpl::PolicyFunc` | `0x6d23e4` |
 | `xnnlMatmulOpImpl::createGraphSpecializedN` | `0x6d53dc` |
-| `xnnlMatmulOpImpl::createGraphSplitMN` | `0x6d871c` |
+| `xnnlMatmulOpImpl::createGraphSplitMN` | `0x6d871c`（尝试过，函数过大，反编译器一小时内未完成） |
 
 ## 7. 复现命令
 
