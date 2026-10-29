@@ -175,3 +175,53 @@ GHIDRA_INSTALL_DIR=$G npx -y rea-agents@6.7.0 function \
 
 注意 Ghidra 把镜像基址放在 `0x100000`，所以 ELF VMA `0x5d386c` 对应
 Ghidra 地址 `0x6d386c`；直接用 VMA 会报 "No procedure exists"。
+
+---
+
+## 8. 设备回来了怎么测（一次跑完）
+
+探针：`tools/probe/probe_npu_matmul.cpp`，已交叉编译为 arm64。
+
+```bash
+adb push probe_npu_matmul /data/local/tmp/
+adb shell chmod 755 /data/local/tmp/probe_npu_matmul
+
+# 两条 kernel 路径各跑一次
+adb shell "/data/local/tmp/o3p_chat.bin --shell '/data/local/tmp/probe_npu_matmul 64 64 8'"
+adb shell "/data/local/tmp/o3p_chat.bin --shell '/data/local/tmp/probe_npu_matmul 64 64 128'"
+```
+
+输出会逐段告诉你卡在哪一层：
+
+| 输出 | 含义 |
+|---|---|
+| `midaDeviceGet -> 0` | 设备可用（已知会通过） |
+| `xnnlCreate -> 0` | 算子库可用（已知会通过） |
+| `make_desc ... -> 非 0` | 描述符创建/设置被拒，形状或布局不对 |
+| `xnnlMatmulCreateGraph -> 0` | **ParamCheck + PolicyFunc 都通过**，形状契约正确 |
+| `xnnlMatmulCreateGraph -> 1` | BAD_PARAM：形状违反 ParamCheck |
+| `xnnlMatmulCreateGraph -> 2` | NOT_SUPPORTED：走了 split K，或该路径不支持 |
+| `midaSubgraphInstantiate(l2b=.. va=..) -> 0` | 执行参数组合被接受（探针扫 9 种） |
+| `max|NPU-CPU| = ... MATCH` | **数值正确** |
+
+### 形状的已知不确定点
+
+`ParamCheck` 的约束是硬事实，但**四维形状的语义编码没有完全确定**。探针用的是最贴合
+约束的一种读法：
+
+```
+input  [1, a, b, K]
+weight [1, a, b, ?]
+output [maxBatch, a, b, N]
+```
+
+若 `xnnlMatmulCreateGraph` 返回非 0，说明这个读法不对；按返回值逐个维度试比重新反编译快。
+
+### 判定顺序
+
+1. 描述符能建 → 形状基本合法
+2. 建图返回 0 → **契约读对了**
+3. instantiate 返回 0 → 执行参数对了
+4. 数值 MATCH → 整条 NPU matmul 打通
+
+任何一步失败都是**局部**问题，不会白跑。
