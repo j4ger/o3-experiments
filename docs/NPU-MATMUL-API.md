@@ -462,3 +462,71 @@ print("Generate NBG in memory Actual NBG size : %lld bytes", size);
 
 **离线能做的逆向到此完成**：不是"没找到方法"，而是**找到了边界**——
 在这台设备上，绕过厂商编译器去驱动 NPU 的成本高于收益。
+
+## 14. 更正：编译器就在我们手里（第 13 节的结论作废）
+
+第 13 节说"需要厂商编译器、工具未获得"——**这个结论是错的**，用户当场指出了它。
+复查后确认：**NN 编译器就在 `libOpenVX.so` 里**。
+
+### 14.1 证据
+
+`libOpenVX.so` 导出的符号：
+
+```
+compiler_core_graph_optimization_hint
+compiler_create_tensor
+compiler_reorder_reshape_relu_elwt
+compiler_blocksize_min / compiler_blocksize_max
+cr_compile_storage / cr_compile_storage_deinit
+```
+
+这就是图编译器本体。第 13 节看到的 `vxGenerateNBG -> vxProcessGraph` 之所以像
+"外部工具"，是因为**编译器是通过公开 API 调用的**，不是命令行程序。
+
+### 14.2 我们手上其实齐了
+
+| 组件 | 库 | 状态 |
+|---|---|---|
+| 图/算子 API | `libOpenVX.so`、`libovxlib.so` | ✅ 已有 |
+| 编译器 | `libOpenVX.so`（`cr_compile_*`、`compiler_*`） | ✅ 已有 |
+| NBG 生成/加载 | `vxGenerateNBG`、`nbg_create_network_from_file/memory` | ✅ 已有 |
+| 执行/驱动 | `libNBGlinker.so` → `libxnumd.so` → `/dev/hpc-*` | ✅ 已有且已打通 |
+
+### 14.3 正确的一层：OpenVX / vsi_nn，而不是 xnnl
+
+`xnnl` 是**LLM 专用层**，它假设 kernel program 已经由上层准备好；
+`vsi_nn` / OpenVX 才是**通用 NN 框架**，编译器在这一层被调用。
+
+关键 API（均已确认导出）：
+
+```
+vxCreateContext        vxCreateGraph         vxCreateTensor
+vxFullyConnectedLayer  vxVerifyGraph         vxProcessGraph
+vxCopyTensorPatch
+vsi_nn_CreateGraph     vsi_nn_AddNode        vsi_nn_VerifyGraph
+vsi_nn_RunGraph        vsi_nn_AsyncRunGraph
+```
+
+`vxFullyConnectedLayer` 的签名从反汇编得出（x0..x6）：
+
+```c
+vx_node vxFullyConnectedLayer(vx_graph graph, vx_tensor inputs, vx_tensor weights,
+                              vx_tensor biases, vx_enum overflow_policy,
+                              vx_enum rounding_policy, vx_tensor outputs);
+```
+
+这正是 Khronos NN 扩展的签名 —— 也就是 **matmul 的标准算子**。
+
+### 14.4 下一步（探针已写好）
+
+`tools/probe/probe_openvx_matmul.c`：
+
+```
+vxCreateContext -> vxCreateGraph -> 建 4 个 tensor -> vxFullyConnectedLayer
+-> vxVerifyGraph（这一步触发编译器）-> vxProcessGraph（NPU 执行）
+-> vxCopyTensorPatch 读回 -> 与 CPU 对拍
+```
+
+它还会在运行时用 `vxnneGetTypeSize` **自己探测 VX_TYPE_* 的枚举值**，避免猜错类型常量。
+
+判定标准不变：`vxVerifyGraph` 返回 0 说明编译成功，`max|NPU-CPU|` 变小说明真的跑了。
