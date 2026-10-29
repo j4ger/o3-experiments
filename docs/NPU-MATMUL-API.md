@@ -225,3 +225,47 @@ output [maxBatch, a, b, N]
 4. 数值 MATCH → 整条 NPU matmul 打通
 
 任何一步失败都是**局部**问题，不会白跑。
+
+---
+
+## 9. 实机结果（2026-10-29）
+
+探针在 `lhasa` 上跑通了三层，卡在第四层：
+
+```
+midaDeviceGet -> 0
+xnnlCreate -> 0
+descriptors in=.. w=.. out=..          （fp16, NHWC）
+xnnlMatmulCreateGraph -> 0            ← 契约读对了
+midaGraphCreate/AddSubgraphNode/Instantiate -> 0
+midaStreamLaunchGraph -> 14 [midaErrorLaunchFailure: launch task error]
+```
+
+### 已确认的调用契约（实机验证）
+
+| 项 | 结论 |
+|---|---|
+| dtype | **必须是 HALF**；FLOAT 被 `ParamCheck` 拒绝 |
+| 布局 | NHWC（layout=2），rank 4 |
+| input 形状 | `[1, 1, 1, K]` |
+| weight 形状 | **`[1, 1, K, N]`**（不是 `[1,1,1,N]`） |
+| output 形状 | `[1, 1, 1, N]` |
+| epilogue | 必须传描述符；全 DISABLE 可通过 |
+| 数据指针 | fp16 主机缓冲即可（库内部处理） |
+| 图执行 | `midaGraphAddSubgraphNode` → `midaGraphInstantiate` → `midaStreamLaunchGraph`，前两步返回 0 |
+
+### 卡点
+
+`midaStreamLaunchGraph` 返回 **14 = `midaErrorLaunchFailure`（launch task error）**，
+与 `l2bSize`/`vaSize`/`stack` 的组合无关（14 / 10 / 12 都出现过，均为 launch 失败族）。
+说明问题不在参数格式，而在**任务本身没被 NPU 固件接受**。
+
+下一个怀疑方向（按优先级）：
+
+1. **kernel 二进制没有加载**：`PolicyFunc` 会打印 `kernel name`，但 kernel 可能
+   需要用某个 `mida...LoadKernel`/module 接口预先注册到 device；
+2. `midaLaunchConfig.stripe_names[32]` 需要填，而不是留空；
+3. 需要 `midaSubgraphSetDMASplitMode` 之类的子图设置；
+4. 该 shape 组合没有可用的 kernel，需要换更大的 M/N。
+
+已确认**不是**的原因：形状、dtype、布局、epilogue、graph 组装、l2b/va/stack 参数。
