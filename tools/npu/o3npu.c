@@ -1,243 +1,622 @@
 /*
- * o3npu - a small driver layer for the Xiaomi 18 Fold (lhasa) NPU.
+ * o3npu - driver layer for the Xiaomi 18 Fold (lhasa) NPU.
  *
- * It wraps the vendor stack so that callers do not have to rediscover it:
- *
- *     your code
- *       -> libxnnl   (op graph builders: matmul / RMSNorm / quantize)
- *         -> mida    (subgraph, instantiate, stream launch, memory)
- *           -> libxnumd (UMD)
- *             -> /dev/hpc-cdev
- *
- * Requirements: uid 0 in a domain that may open /dev/hpc-cdev, /dev/hpc-heap,
- * /dev/hpc-rpmsg, the dma heaps, /dev/timestamp and /dev/xr_dmabuf_helper, and
- * read vendor_npu_prop. See docs/NPU-ACCESS.md for the exact ksud rules.
- *
- * Memory: midaMemoryAlloc(mem, dev, size, 1, 0, name) yields CPU-mappable memory
- * (midaMemoryGetPtr returns a real pointer); the flag 0 variant is NPU-side only.
+ * See o3npu.h for the stack.  This file is C on purpose: mida is a plain C
+ * ABI, and the only C++ dependency (xnnlSetTensorDescriptor takes a
+ * std::string) is isolated in xnnl_shim.cpp.
  */
+#define _GNU_SOURCE 1
+
 #include "o3npu.h"
+#include "vendor/mida_types.h"
 
 #include <dlfcn.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct midaDeviceConfig {
-    int32_t performance;
-    uint32_t log_close;
-    uint32_t pu_num;
-    uint32_t mem_debug;
-    uint32_t cu_delay;
-    uint8_t drm_protect;
-    uint8_t pad[3];
-    uint32_t power_policy;
+/* xnnl_shim.cpp */
+extern int  o3xnnl_open(void ** out, void * mida_device);
+extern void o3xnnl_close(void * handle);
+extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
+                                const int in_dims[4], const void * in_ptr,
+                                const int w_dims[4], const void * w_ptr,
+                                const int out_dims[4], void * out_ptr,
+                                int transposed_w);
+
+/* ------------------------------------------------------------------ */
+/* fp16 -> fp32 (no ggml dependency here)                              */
+/* ------------------------------------------------------------------ */
+
+static float fp16_to_fp32(uint16_t h) {
+    uint32_t sign = (uint32_t) (h & 0x8000u) << 16;
+    uint32_t exp  = (h >> 10) & 0x1fu;
+    uint32_t mant = h & 0x3ffu;
+    uint32_t bits;
+
+    if (exp == 0) {
+        if (mant == 0) {
+            bits = sign;
+        } else {
+            exp = 127 - 15 + 1;
+            while ((mant & 0x400u) == 0) {
+                mant <<= 1;
+                exp--;
+            }
+            mant &= 0x3ffu;
+            bits = sign | (exp << 23) | (mant << 13);
+        }
+    } else if (exp == 31) {
+        bits = sign | 0x7f800000u | (mant << 13);
+    } else {
+        bits = sign | ((exp + 127 - 15) << 23) | (mant << 13);
+    }
+
+    float f;
+    memcpy(&f, &bits, sizeof f);
+    return f;
+}
+
+/* ------------------------------------------------------------------ */
+/* mida bindings                                                       */
+/* ------------------------------------------------------------------ */
+
+struct mida_api {
+    void * lib;
+
+    int  (*device_get)(midaDevice_t *, uint32_t, midaDeviceConfig *);
+    int  (*device_release)(midaDevice_t);
+    int  (*device_reset)(midaDevice_t);
+    int  (*device_get_limit)(midaDevice_t, int, uint64_t *);
+
+    int  (*mem_alloc)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *);
+    int  (*mem_free)(midaMemory_t);
+    void * (*mem_ptr)(midaMemory_t);
+    int  (*mem_fd)(midaMemory_t);
+    uint64_t (*mem_size)(midaMemory_t);
+    uint64_t (*mem_va)(midaMemory_t);
+    int  (*mem_cache_start)(midaMemory_t);
+    int  (*mem_cache_end)(midaMemory_t);
+
+    int  (*addr_reserve)(midaAddress_t *, midaDevice_t, uint64_t, uint32_t, uint32_t);
+    int  (*addr_free)(midaAddress_t);
+    uint64_t (*addr_va)(midaAddress_t);
+    int  (*mem_map_addr)(midaMemory_t *, int, uint64_t, uint64_t, midaAddress_t);
+
+    int  (*sub_create)(midaSubgraph_t *, midaDevice_t, midaSubgraphConfig *);
+    int  (*sub_destroy)(midaSubgraph_t);
+    int  (*sub_instantiate)(midaSubgraphExec_t *, midaSubgraph_t, midaSubgraphExecParams *);
+    int  (*sub_exec_destroy)(midaSubgraphExec_t);
+    int  (*sub_exec_stack_info)(midaSubgraphExec_t, midaSubgraphStackInfo *);
+    int  (*sub_print_info)(midaSubgraph_t);
+    int  (*sub_exec_print_info)(midaSubgraphExec_t);
+
+    int  (*stream_create)(midaStream_t *, midaDevice_t, midaStreamConfig *);
+    int  (*stream_destroy)(midaStream_t);
+    int  (*stream_launch_subgraph_async)(midaSubgraphExec_t, midaLaunchConfig *, midaStream_t);
+    int  (*stream_sync)(midaStream_t);
+
+    const char * (*error_name)(int);
 };
 
-typedef int (*fn_get)(void **, uint32_t, void *);
-typedef int (*fn_release)(void *);
-typedef int (*fn_alloc)(void **, void *, uint64_t, uint32_t, uint32_t, const char *);
-typedef int (*fn_free)(void *);
-typedef void *(*fn_ptr)(void *);
-typedef uint64_t (*fn_u64)(void *);
-typedef int (*fn_getfd)(void *);
-typedef int (*fn_sub_create)(void **, void *, void *);
-typedef int (*fn_sub_destroy)(void *);
-typedef int (*fn_sub_inst)(void **, void *, void *);
-typedef int (*fn_exec_destroy)(void *);
-typedef int (*fn_stream_create)(void **, void *, void *);
-typedef int (*fn_stream_destroy)(void *);
-typedef int (*fn_launch)(void *, void *, void *);
-typedef int (*fn_sync)(void *);
-typedef int (*fn_xnnl_create)(void **, void *);
-typedef int (*fn_xnnl_destroy)(void *);
+static struct mida_api * g_api = NULL;
+
+static void * need_sym(void * lib, const char * name) {
+    void * p = dlsym(lib, name);
+    if (!p) {
+        fprintf(stderr, "o3npu: missing symbol %s\n", name);
+    }
+    return p;
+}
+
+static struct mida_api * mida_get(void) {
+    if (g_api) {
+        return g_api;
+    }
+    struct mida_api * a = (struct mida_api *) calloc(1, sizeof *a);
+    if (!a) {
+        return NULL;
+    }
+    a->lib = dlopen("/vendor/lib64/libxnumd.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!a->lib) {
+        a->lib = dlopen("libxnumd.so", RTLD_NOW | RTLD_GLOBAL);
+    }
+    if (!a->lib) {
+        fprintf(stderr, "o3npu: dlopen libxnumd failed: %s\n", dlerror());
+        free(a);
+        return NULL;
+    }
+
+    a->device_get    = (int (*)(midaDevice_t *, uint32_t, midaDeviceConfig *)) need_sym(a->lib, "midaDeviceGet");
+    a->device_release= (int (*)(midaDevice_t)) need_sym(a->lib, "midaDeviceRelease");
+    a->device_reset  = (int (*)(midaDevice_t)) need_sym(a->lib, "midaDeviceReset");
+    a->device_get_limit = (int (*)(midaDevice_t, int, uint64_t *)) dlsym(a->lib, "midaDeviceGetLimit");
+
+    a->mem_alloc     = (int (*)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *)) need_sym(a->lib, "midaMemoryAlloc");
+    a->mem_free      = (int (*)(midaMemory_t)) need_sym(a->lib, "midaMemoryFree");
+    a->mem_ptr       = (void * (*)(midaMemory_t)) need_sym(a->lib, "midaMemoryGetPtr");
+    a->mem_fd        = (int (*)(midaMemory_t)) need_sym(a->lib, "midaMemoryGetFd");
+    a->mem_size      = (uint64_t (*)(midaMemory_t)) dlsym(a->lib, "midaMemorySize");
+    a->mem_va        = (uint64_t (*)(midaMemory_t)) dlsym(a->lib, "midaMemoryGetDeviceVa");
+    a->mem_cache_start = (int (*)(midaMemory_t)) dlsym(a->lib, "midaMemoryCacheStart");
+    a->mem_cache_end = (int (*)(midaMemory_t)) dlsym(a->lib, "midaMemoryCacheEnd");
+
+    a->addr_reserve  = (int (*)(midaAddress_t *, midaDevice_t, uint64_t, uint32_t, uint32_t)) need_sym(a->lib, "midaAddressReserve");
+    a->addr_free     = (int (*)(midaAddress_t)) dlsym(a->lib, "midaAddressFree");
+    a->addr_va       = (uint64_t (*)(midaAddress_t)) need_sym(a->lib, "midaAddressGetDeviceVa");
+    a->mem_map_addr  = (int (*)(midaMemory_t *, int, uint64_t, uint64_t, midaAddress_t)) need_sym(a->lib, "midaMemoryMapWithAddr");
+
+    a->sub_create    = (int (*)(midaSubgraph_t *, midaDevice_t, midaSubgraphConfig *)) need_sym(a->lib, "midaSubgraphCreate");
+    a->sub_destroy   = (int (*)(midaSubgraph_t)) need_sym(a->lib, "midaSubgraphDestroy");
+    a->sub_instantiate = (int (*)(midaSubgraphExec_t *, midaSubgraph_t, midaSubgraphExecParams *)) need_sym(a->lib, "midaSubgraphInstantiate");
+    a->sub_exec_destroy = (int (*)(midaSubgraphExec_t)) need_sym(a->lib, "midaSubgraphExecDestroy");
+    a->sub_exec_stack_info = (int (*)(midaSubgraphExec_t, midaSubgraphStackInfo *)) dlsym(a->lib, "midaSubgraphExecGetStackInfo");
+    a->sub_print_info = (int (*)(midaSubgraph_t)) dlsym(a->lib, "midaSubgraphPrintInfo");
+    a->sub_exec_print_info = (int (*)(midaSubgraphExec_t)) dlsym(a->lib, "midaSubgraphExecPrintInfo");
+
+    a->stream_create = (int (*)(midaStream_t *, midaDevice_t, midaStreamConfig *)) need_sym(a->lib, "midaStreamCreate");
+    a->stream_destroy= (int (*)(midaStream_t)) need_sym(a->lib, "midaStreamDestroy");
+    a->stream_launch_subgraph_async = (int (*)(midaSubgraphExec_t, midaLaunchConfig *, midaStream_t)) need_sym(a->lib, "midaStreamLaunchSubgraphAsync");
+    a->stream_sync   = (int (*)(midaStream_t)) need_sym(a->lib, "midaStreamSynchronize");
+
+    a->error_name    = (const char * (*)(int)) dlsym(a->lib, "midaGetErrorName");
+
+    if (!a->device_get || !a->mem_alloc || !a->mem_free ||
+        !a->addr_reserve || !a->mem_map_addr ||
+        !a->sub_create || !a->sub_instantiate ||
+        !a->stream_create || !a->stream_launch_subgraph_async) {
+        fprintf(stderr, "o3npu: device symbol resolution failed\n");
+        dlclose(a->lib);
+        free(a);
+        return NULL;
+    }
+    g_api = a;
+    return a;
+}
+
+static const char * err_str(const struct mida_api * a, int e) {
+    static char buf[128];
+    const char * n = (a && a->error_name) ? a->error_name(e) : NULL;
+    snprintf(buf, sizeof buf, "%d%s%s", e, n ? " (" : "", n ? n : "");
+    if (n) {
+        size_t l = strlen(buf);
+        snprintf(buf + l, sizeof buf - l, ")");
+    }
+    return buf;
+}
+
+/* ------------------------------------------------------------------ */
+/* device buffers                                                      */
+/* ------------------------------------------------------------------ */
+
+struct dbuf {
+    midaMemory_t   mem;
+    midaAddress_t  addr;
+    void *         cpu;
+    int            fd;
+    uint64_t       va;
+    uint64_t       size;
+};
+
+static void dbuf_free(struct mida_api * a, struct dbuf * d) {
+    if (d->mem) {
+        a->mem_free(d->mem);
+    }
+    if (d->addr && a->addr_free) {
+        a->addr_free(d->addr);
+    }
+    memset(d, 0, sizeof *d);
+    d->fd = -1;
+}
+
+static int dbuf_reserve(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
+                        uint64_t want, const char * name) {
+    if (want == 0) {
+        want = 4096;
+    }
+    want = (want + 0xfff) & ~0xfffull;
+    if (d->size >= want) {
+        return 0;
+    }
+    dbuf_free(a, d);
+
+    int rc = a->mem_alloc(&d->mem, dev, want, 1, 0, name);
+    if (rc != 0 || !d->mem) {
+        fprintf(stderr, "o3npu: midaMemoryAlloc(%s,%llu) -> %s\n", name,
+                (unsigned long long) want, err_str(a, rc));
+        return -1;
+    }
+    d->cpu = a->mem_ptr(d->mem);
+    d->fd  = a->mem_fd(d->mem);
+
+    rc = a->addr_reserve(&d->addr, dev, want, 2, 0);
+    if (rc != 0 || !d->addr) {
+        fprintf(stderr, "o3npu: midaAddressReserve(%s) -> %s\n", name, err_str(a, rc));
+        return -1;
+    }
+    d->va = a->addr_va(d->addr);
+
+    midaMemory_t mapped = NULL;
+    rc = a->mem_map_addr(&mapped, d->fd, want, 0, d->addr);
+    if (rc != 0) {
+        fprintf(stderr, "o3npu: midaMemoryMapWithAddr(%s) -> %s\n", name, err_str(a, rc));
+        return -1;
+    }
+    d->size = want;
+    if (!d->cpu || d->va == 0) {
+        fprintf(stderr, "o3npu: buffer %s cpu=%p va=0x%llx\n", name, d->cpu,
+                (unsigned long long) d->va);
+        return -1;
+    }
+    return 0;
+}
+
+static void dbuf_sync_cpu(struct mida_api * a, struct dbuf * d) {
+    if (a->mem_cache_start) a->mem_cache_start(d->mem);
+}
+
+static void dbuf_sync_dev(struct mida_api * a, struct dbuf * d) {
+    if (a->mem_cache_end) a->mem_cache_end(d->mem);
+}
+
+/* ------------------------------------------------------------------ */
+/* legacy o3npu_t API                                                  */
+/* ------------------------------------------------------------------ */
 
 struct o3npu {
-    void *h_numd;
-    void *h_xnnl;
-    void *dev;
-    void *xnnl;
-    fn_get get;
-    fn_release release;
-    fn_alloc alloc;
-    fn_free mfree;
-    fn_ptr mptr;
-    fn_u64 msize;
-    fn_u64 mva;
-    fn_getfd getfd;
-    fn_sub_create sub_create;
-    fn_sub_destroy sub_destroy;
-    fn_sub_inst sub_inst;
-    fn_exec_destroy exec_destroy;
-    fn_stream_create stream_create;
-    fn_stream_destroy stream_destroy;
-    fn_launch launch;
-    fn_sync sync;
-    fn_xnnl_create xcreate;
-    fn_xnnl_destroy xdestroy;
+    struct mida_api * api;
+    midaDevice_t dev;
+    void * xnnl;
 };
 
-o3npu_t *o3npu_open(void) {
-    o3npu_t *n = (o3npu_t *)calloc(1, sizeof *n);
+o3npu_t * o3npu_open(void) {
+    struct mida_api * a = mida_get();
+    if (!a) {
+        return NULL;
+    }
+    o3npu_t * n = (o3npu_t *) calloc(1, sizeof *n);
     if (!n) {
         return NULL;
     }
-    n->h_numd = dlopen("/vendor/lib64/libxnumd.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!n->h_numd) {
-        dlclose(n->h_numd);
+    n->api = a;
+    midaDeviceConfig cfg;
+    memset(&cfg, 0, sizeof cfg);
+    int rc = a->device_get(&n->dev, 0, &cfg);
+    if (rc != 0 || !n->dev) {
+        fprintf(stderr, "o3npu: midaDeviceGet -> %s\n", err_str(a, rc));
         free(n);
         return NULL;
     }
-    n->h_xnnl = dlopen("/vendor/lib64/libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!n->h_xnnl) {
-        n->h_xnnl = dlopen("libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
-    }
-
-    n->get = (fn_get)dlsym(n->h_numd, "midaDeviceGet");
-    n->release = (fn_release)dlsym(n->h_numd, "midaDeviceRelease");
-    n->alloc = (fn_alloc)dlsym(n->h_numd, "midaMemoryAlloc");
-    n->mfree = (fn_free)dlsym(n->h_numd, "midaMemoryFree");
-    n->mptr = (fn_ptr)dlsym(n->h_numd, "midaMemoryGetPtr");
-    n->msize = (fn_u64)dlsym(n->h_numd, "midaMemorySize");
-    n->mva = (fn_u64)dlsym(n->h_numd, "midaMemoryGetDeviceVa");
-    n->getfd = (fn_getfd)dlsym(n->h_numd, "midaMemoryGetFd");
-    n->sub_create = (fn_sub_create)dlsym(n->h_numd, "midaSubgraphCreate");
-    n->sub_destroy = (fn_sub_destroy)dlsym(n->h_numd, "midaSubgraphDestroy");
-    n->sub_inst = (fn_sub_inst)dlsym(n->h_numd, "midaSubgraphInstantiate");
-    n->exec_destroy = (fn_exec_destroy)dlsym(n->h_numd, "midaSubgraphExecDestroy");
-    n->stream_create = (fn_stream_create)dlsym(n->h_numd, "midaStreamCreate");
-    n->stream_destroy = (fn_stream_destroy)dlsym(n->h_numd, "midaStreamDestroy");
-    n->launch = (fn_launch)dlsym(n->h_numd, "midaStreamLaunchSubgraph");
-    n->sync = (fn_sync)dlsym(n->h_numd, "midaStreamSynchronize");
-    if (n->h_xnnl) {
-        n->xcreate = (fn_xnnl_create)dlsym(n->h_xnnl, "xnnlCreate");
-        n->xdestroy = (fn_xnnl_destroy)dlsym(n->h_xnnl, "xnnlDestroy");
-    }
-
-    if (!n->get || !n->alloc || !n->mfree) {
-        o3npu_close(n);
-        return NULL;
-    }
-
-    struct midaDeviceConfig cfg;
-    memset(&cfg, 0, sizeof cfg);
-    int e = n->get(&n->dev, 0, &cfg);
-    if (e != 0 || !n->dev) {
-        o3npu_close(n);
-        return NULL;
-    }
-    if (n->xcreate) {
-        void *xh = NULL;
-        if (n->xcreate(&xh, n->dev) == 0) {
-            n->xnnl = xh;
-        }
-    }
+    o3xnnl_open(&n->xnnl, n->dev);
     return n;
 }
 
-void o3npu_close(o3npu_t *n) {
+void o3npu_close(o3npu_t * n) {
     if (!n) {
         return;
     }
-    if (n->xnnl && n->xdestroy) {
-        n->xdestroy(n->xnnl);
+    if (n->xnnl) {
+        o3xnnl_close(n->xnnl);
     }
-    if (n->dev && n->release) {
-        n->release(n->dev);
-    }
-    if (n->h_xnnl) {
-        dlclose(n->h_xnnl);
-    }
-    if (n->h_numd) {
-        dlclose(n->h_numd);
+    if (n->dev && n->api) {
+        n->api->device_release(n->dev);
     }
     free(n);
 }
 
-void *o3npu_alloc(o3npu_t *n, size_t size, int cpu_visible, size_t *out_size) {
-    if (!n || !n->alloc) {
+void * o3npu_alloc(o3npu_t * n, size_t size, int cpu_visible, size_t * out_size) {
+    if (!n) {
         return NULL;
     }
-    void *mem = NULL;
-    int e = n->alloc(&mem, n->dev, size, cpu_visible ? 1 : 0, 0, "o3npu");
-    if (e != 0) {
+    midaMemory_t mem = NULL;
+    int rc = n->api->mem_alloc(&mem, n->dev, size, cpu_visible ? 1 : 0, 0, "o3npu");
+    if (rc != 0) {
         return NULL;
     }
-    if (out_size && n->msize) {
-        *out_size = (size_t)n->msize(mem);
+    if (out_size && n->api->mem_size) {
+        *out_size = (size_t) n->api->mem_size(mem);
     }
     return mem;
 }
 
-void *o3npu_cpu_ptr(o3npu_t *n, void *mem) {
-    return (n && n->mptr) ? n->mptr(mem) : NULL;
+void * o3npu_cpu_ptr(o3npu_t * n, void * mem) {
+    return (n && n->api) ? n->api->mem_ptr((midaMemory_t) mem) : NULL;
 }
 
-uint64_t o3npu_dev_va(o3npu_t *n, void *mem) {
-    return (n && n->mva) ? n->mva(mem) : 0;
+uint64_t o3npu_dev_va(o3npu_t * n, void * mem) {
+    return (n && n->api && n->api->mem_va) ? n->api->mem_va((midaMemory_t) mem) : 0;
 }
 
-int o3npu_mem_fd(o3npu_t *n, void *mem) {
-    return (n && n->getfd) ? n->getfd(mem) : -1;
+int o3npu_mem_fd(o3npu_t * n, void * mem) {
+    return (n && n->api) ? n->api->mem_fd((midaMemory_t) mem) : -1;
 }
 
-void o3npu_free(o3npu_t *n, void *mem) {
-    if (n && n->mfree && mem) {
-        n->mfree(mem);
+void o3npu_free(o3npu_t * n, void * mem) {
+    if (n && n->api && mem) {
+        n->api->mem_free((midaMemory_t) mem);
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* self test: proves every layer except op execution                    */
-/* ------------------------------------------------------------------ */
 int o3npu_selftest(void) {
     printf("== o3npu selftest ==\n");
-    o3npu_t *n = o3npu_open();
-    printf("o3npu_open -> %p\n", (void *)n);
+    o3npu_t * n = o3npu_open();
+    printf("o3npu_open -> %p\n", (void *) n);
     if (!n) {
         return 1;
     }
-    printf("  device=%p xnnl=%p\n", n->dev, n->xnnl);
-
     size_t sz = 0;
-    void *host = o3npu_alloc(n, 4096, 1, &sz);
+    void * host = o3npu_alloc(n, 4096, 1, &sz);
     printf("  alloc(cpu_visible) -> %p size=%zu\n", host, sz);
     if (host) {
-        void *p = o3npu_cpu_ptr(n, host);
+        void * p = o3npu_cpu_ptr(n, host);
         printf("  cpu_ptr=%p dev_va=0x%llx fd=%d\n", p,
-               (unsigned long long)o3npu_dev_va(n, host), o3npu_mem_fd(n, host));
-        if (p) {
-            memset(p, 0x5a, 64);
-            int ok = 1;
-            for (int i = 0; i < 64; i++) {
-                if (((unsigned char *)p)[i] != 0x5a) {
-                    ok = 0;
-                    break;
+               (unsigned long long) o3npu_dev_va(n, host), o3npu_mem_fd(n, host));
+        o3npu_free(n, host);
+    }
+    printf("RESULT %s\n", host ? "ok" : "alloc_failed");
+    o3npu_close(n);
+    return host ? 0 : 2;
+}
+
+/* ------------------------------------------------------------------ */
+/* matmul                                                              */
+/* ------------------------------------------------------------------ */
+
+struct o3npu_matmul {
+    struct mida_api * api;
+    midaDevice_t dev;
+    void *       xnnl;
+    midaStream_t stream;
+    struct dbuf  in;
+    struct dbuf  w;
+    struct dbuf  out;
+    int          trace;
+    int          transposed_w;   /* 1: weight stays in ggml layout */
+    char         err[256];
+};
+
+static int env_int(const char * name, int def) {
+    const char * v = getenv(name);
+    if (!v || !*v) {
+        return def;
+    }
+    return (int) strtol(v, NULL, 0);
+}
+
+o3npu_matmul_t * o3npu_matmul_open(void) {
+    struct mida_api * a = mida_get();
+    if (!a) {
+        return NULL;
+    }
+    o3npu_matmul_t * m = (o3npu_matmul_t *) calloc(1, sizeof *m);
+    if (!m) {
+        return NULL;
+    }
+    m->api = a;
+    m->in.fd = m->w.fd = m->out.fd = -1;
+    m->trace = getenv("O3NPU_TRACE") != NULL;
+    m->transposed_w = env_int("O3NPU_TRANSPOSED_W", 1);
+
+    midaDeviceConfig cfg;
+    memset(&cfg, 0, sizeof cfg);
+    int rc = a->device_get(&m->dev, 0, &cfg);
+    if (rc != 0 || !m->dev) {
+        snprintf(m->err, sizeof m->err, "midaDeviceGet -> %s", err_str(a, rc));
+        free(m);
+        return NULL;
+    }
+
+    rc = o3xnnl_open(&m->xnnl, m->dev);
+    if (rc != 0 || !m->xnnl) {
+        snprintf(m->err, sizeof m->err, "xnnlCreate -> %d", rc);
+        a->device_release(m->dev);
+        free(m);
+        return NULL;
+    }
+
+    midaStreamConfig scfg;
+    memset(&scfg, 0, sizeof scfg);
+    scfg.type = 1;  /* the only accepted value (see docs/NPU-MATMUL-API.md 10.1) */
+    rc = a->stream_create(&m->stream, m->dev, &scfg);
+    if (rc != 0 || !m->stream) {
+        snprintf(m->err, sizeof m->err, "midaStreamCreate -> %s", err_str(a, rc));
+        o3xnnl_close(m->xnnl);
+        a->device_release(m->dev);
+        free(m);
+        return NULL;
+    }
+    if (m->trace) {
+        printf("o3npu_matmul: device=%p stream=%p transposed_w=%d\n",
+               m->dev, m->stream, m->transposed_w);
+    }
+    return m;
+}
+
+void o3npu_matmul_close(o3npu_matmul_t * m) {
+    if (!m) {
+        return;
+    }
+    dbuf_free(m->api, &m->in);
+    dbuf_free(m->api, &m->w);
+    dbuf_free(m->api, &m->out);
+    if (m->stream) m->api->stream_destroy(m->stream);
+    if (m->xnnl) o3xnnl_close(m->xnnl);
+    if (m->dev) m->api->device_release(m->dev);
+    free(m);
+}
+
+const char * o3npu_matmul_error(const o3npu_matmul_t * m) {
+    return m ? m->err : "no handle";
+}
+
+void o3npu_matmul_set_trace(int on) {
+    (void) on;
+}
+
+static void fill_stripe_names(midaLaunchConfig * lc) {
+    const char * env = getenv("O3NPU_STRIPE");
+    if (!env || !*env) {
+        return;
+    }
+    char tmp[512];
+    snprintf(tmp, sizeof tmp, "%s", env);
+    char * save = NULL;
+    char * tok = strtok_r(tmp, ",", &save);
+    int i = 0;
+    while (tok && i < 32) {
+        snprintf(lc->stripe_names[i], 5, "%s", tok);
+        tok = strtok_r(NULL, ",", &save);
+        i++;
+    }
+}
+
+int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
+                     const uint16_t * w_f16,
+                     const uint16_t * x_f16,
+                     float * out_f32) {
+    if (!m || K <= 0 || M <= 0 || T <= 0) {
+        return -1;
+    }
+    struct mida_api * a = m->api;
+    int rc;
+
+    m->err[0] = 0;
+
+    if (dbuf_reserve(a, m->dev, &m->in, (uint64_t) K * T * 2, "o3in") != 0 ||
+        dbuf_reserve(a, m->dev, &m->w, (uint64_t) K * M * 2, "o3w") != 0 ||
+        dbuf_reserve(a, m->dev, &m->out, (uint64_t) M * T * 2, "o3out") != 0) {
+        snprintf(m->err, sizeof m->err, "buffer allocation failed");
+        return -2;
+    }
+
+    /* upload activations: already in the layout xnnl wants ([K] per token) */
+    dbuf_sync_cpu(a, &m->in);
+    memcpy(m->in.cpu, x_f16, (size_t) K * T * 2);
+    dbuf_sync_dev(a, &m->in);
+
+    /* upload weights */
+    dbuf_sync_cpu(a, &m->w);
+    if (m->transposed_w) {
+        /* ggml layout is already [M][K] with K fastest */
+        memcpy(m->w.cpu, w_f16, (size_t) K * M * 2);
+    } else {
+        /* transpose to xnnl layout [K][M] with M fastest */
+        const uint16_t * src = w_f16;
+        uint16_t * dst = (uint16_t *) m->w.cpu;
+        for (int k = 0; k < K; k++) {
+            for (int j = 0; j < M; j++) {
+                dst[(size_t) k * M + j] = src[(size_t) j * K + k];
+            }
+        }
+    }
+    dbuf_sync_dev(a, &m->w);
+
+    dbuf_sync_cpu(a, &m->out);
+    memset(m->out.cpu, 0, (size_t) M * T * 2);
+    dbuf_sync_dev(a, &m->out);
+
+    midaSubgraphConfig subcfg;
+    memset(&subcfg, 0, sizeof subcfg);
+    midaSubgraph_t sub = NULL;
+    rc = a->sub_create(&sub, m->dev, &subcfg);
+    if (rc != 0 || !sub) {
+        snprintf(m->err, sizeof m->err, "midaSubgraphCreate -> %s", err_str(a, rc));
+        return -3;
+    }
+
+    const int in_dims[4]  = { 1, 1, 1, K };
+    int       w_dims[4]   = { 1, 1, K, M };
+    const int out_dims[4] = { T, 1, 1, M };
+    if (m->transposed_w) {
+        w_dims[2] = M;
+        w_dims[3] = K;
+    }
+
+    rc = o3xnnl_matmul_graph(m->xnnl, sub,
+                             in_dims, (const void *) m->in.va,
+                             w_dims,  (const void *) m->w.va,
+                             out_dims, (void *) m->out.va,
+                             m->transposed_w);
+    if (rc != 0) {
+        snprintf(m->err, sizeof m->err, "xnnlMatmulCreateGraph -> %d", rc);
+        a->sub_destroy(sub);
+        return -4;
+    }
+
+    midaSubgraphExecParams ep;
+    memset(&ep, 0, sizeof ep);
+    ep.l2bSize = (uint32_t) env_int("O3NPU_L2B", 0);
+    ep.vaSize  = (uint32_t) env_int("O3NPU_VA", 0);
+
+    midaSubgraphExec_t exec = NULL;
+    rc = a->sub_instantiate(&exec, sub, &ep);
+    if (rc != 0 || !exec) {
+        snprintf(m->err, sizeof m->err, "midaSubgraphInstantiate -> %s", err_str(a, rc));
+        a->sub_destroy(sub);
+        return -5;
+    }
+
+    /* ask the runtime how much stack the subgraph needs, then re-instantiate */
+    if (a->sub_exec_stack_info) {
+        midaSubgraphStackInfo si;
+        memset(&si, 0, sizeof si);
+        if (a->sub_exec_stack_info(exec, &si) == 0 && si.stack_size > 0 && !si.stack_mem) {
+            struct dbuf stack;
+            memset(&stack, 0, sizeof stack);
+            stack.fd = -1;
+            if (dbuf_reserve(a, m->dev, &stack, si.stack_size, "o3stack") == 0) {
+                ep.stackInfo.stack_size = si.stack_size;
+                ep.stackInfo.stack_mem  = stack.mem;
+                midaSubgraphExec_t exec2 = NULL;
+                if (a->sub_instantiate(&exec2, sub, &ep) == 0 && exec2) {
+                    a->sub_exec_destroy(exec);
+                    exec = exec2;
+                } else {
+                    dbuf_free(a, &stack);
                 }
             }
-            printf("  write/readback %s\n", ok ? "OK" : "MISMATCH");
         }
-        o3npu_free(n, host);
-        printf("  freed\n");
     }
 
-    void *npu = o3npu_alloc(n, 4096, 0, &sz);
-    printf("  alloc(npu_only) -> %p size=%zu\n", npu, sz);
-    if (npu) {
-        o3npu_free(n, npu);
+    if (m->trace && a->sub_exec_print_info) {
+        a->sub_exec_print_info(exec);
     }
 
-    uint8_t subcfg[0xa0];
-    memset(subcfg, 0, sizeof subcfg);
-    void *sub = NULL;
-    int e = n->sub_create ? n->sub_create(&sub, n->dev, subcfg) : -1;
-    printf("  subgraph_create -> %d sub=%p\n", e, sub);
-    if (sub && n->sub_destroy) {
-        n->sub_destroy(sub);
+    midaLaunchConfig lc;
+    memset(&lc, 0, sizeof lc);
+    lc.cu_num = (uint32_t) env_int("O3NPU_CU", 1);
+    lc.performance_level = (uint32_t) env_int("O3NPU_PERF", 0);
+    lc.ddr_ratio = 1.0f;
+    lc.fw_timeout = (uint32_t) env_int("O3NPU_FW_TIMEOUT", 10000);
+    lc.name = "o3npu";
+    fill_stripe_names(&lc);
+
+    rc = a->stream_launch_subgraph_async(exec, &lc, m->stream);
+    if (rc != 0) {
+        snprintf(m->err, sizeof m->err, "midaStreamLaunchSubgraphAsync -> %s", err_str(a, rc));
+        a->sub_exec_destroy(exec);
+        a->sub_destroy(sub);
+        return -6;
     }
 
-    o3npu_close(n);
-    printf("RESULT ok\n");
+    rc = a->stream_sync(m->stream);
+    if (rc != 0) {
+        snprintf(m->err, sizeof m->err, "midaStreamSynchronize -> %s", err_str(a, rc));
+        a->sub_exec_destroy(exec);
+        a->sub_destroy(sub);
+        return -7;
+    }
+
+    dbuf_sync_cpu(a, &m->out);
+    {
+        const uint16_t * o = (const uint16_t *) m->out.cpu;
+        for (size_t i = 0, n = (size_t) M * T; i < n; i++) {
+            out_f32[i] = fp16_to_fp32(o[i]);
+        }
+    }
+    dbuf_sync_dev(a, &m->out);
+
+    a->sub_exec_destroy(exec);
+    a->sub_destroy(sub);
     return 0;
 }

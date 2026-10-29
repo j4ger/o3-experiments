@@ -19,9 +19,12 @@
 #include "ggml.h"
 #include "ggml-impl.h"
 
+#include "o3npu.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #define O3NPU_NAME "O3NPU"
 
@@ -195,14 +198,115 @@ static bool o3npu_can_matmul(const ggml_tensor * op) {
     return true;
 }
 
+/* ------------------------------------------------------------------ */
+/* NPU path                                                            */
+/* ------------------------------------------------------------------ */
+
+static bool o3npu_npu_required(void) {
+    const char * e = getenv("O3NPU_NPU");
+    return e && e[0] == '1';
+}
+
+static o3npu_matmul_t * o3npu_npu_handle(void) {
+    static int state = 0;   /* 0 = uninitialised, 1 = ready, -1 = unavailable */
+    static o3npu_matmul_t * h = nullptr;
+    if (state == 0) {
+        const char * e = getenv("O3NPU_NPU");
+        if (e && e[0] == '0') {
+            state = -1;
+        } else {
+            h = o3npu_matmul_open();
+            state = h ? 1 : -1;
+            if (!h) {
+                fprintf(stderr, "O3NPU: NPU unavailable, using reference matmul\n");
+            } else if (o3npu_debug()) {
+                fprintf(stderr, "O3NPU: NPU matmul ready\n");
+            }
+        }
+    }
+    return state == 1 ? h : nullptr;
+}
+
+static bool o3npu_is_contiguous_2d(const ggml_tensor * t) {
+    return t->nb[0] == ggml_element_size(t) && t->nb[1] == t->nb[0] * t->ne[0];
+}
+
+static bool o3npu_can_matmul_npu(const ggml_tensor * op) {
+    if (!o3npu_can_matmul(op)) {
+        return false;
+    }
+    const ggml_tensor * a = op->src[0];
+    const ggml_tensor * b = op->src[1];
+    /* phase 1: decode only (one token); xnnl's verified shape has maxBatch=1 */
+    if (b->ne[1] != 1) {
+        return false;
+    }
+    if (a->ne[0] > 0x8000 || a->ne[1] > 0x8000) {
+        return false;
+    }
+    if (!o3npu_is_contiguous_2d(a) || !o3npu_is_contiguous_2d(b)) {
+        return false;
+    }
+    if (op->nb[0] != 4 || op->nb[1] != op->nb[0] * op->ne[0]) {
+        return false;
+    }
+    return true;
+}
+
+static enum ggml_status o3npu_matmul_npu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    o3npu_matmul_t * h = o3npu_npu_handle();
+    if (!h) {
+        return GGML_STATUS_FAILED;
+    }
+
+    const int64_t K = src0->ne[0];
+    const int64_t M = src0->ne[1];
+    const int64_t T = src1->ne[1];
+
+    static std::vector<uint16_t> w;
+    static std::vector<uint16_t> x;
+    static std::vector<float>    o;
+    w.resize((size_t) K * M);
+    x.resize((size_t) K * T);
+    o.resize((size_t) M * T);
+
+    auto to_f16 = [](const ggml_tensor * t, uint16_t * out, size_t n) {
+        const char * p = (const char *) t->data;
+        if (t->type == GGML_TYPE_F16) {
+            memcpy(out, p, n * 2);
+            return;
+        }
+        for (size_t i = 0; i < n; i++) {
+            float v;
+            if (t->type == GGML_TYPE_F32) {
+                v = ((const float *) p)[i];
+            } else { /* BF16 */
+                v = GGML_BF16_TO_FP32(((const ggml_bf16_t *) p)[i]);
+            }
+            out[i] = GGML_FP32_TO_FP16(v);
+        }
+    };
+
+    to_f16(src0, w.data(), (size_t) K * M);
+    to_f16(src1, x.data(), (size_t) K * T);
+
+    int rc = o3npu_matmul_run(h, (int) K, (int) M, (int) T, w.data(), x.data(), o.data());
+    if (rc != 0) {
+        fprintf(stderr, "O3NPU: o3npu_matmul_run(K=%lld,M=%lld,T=%lld) failed: %d (%s)\n",
+                (long long) K, (long long) M, (long long) T, rc, o3npu_matmul_error(h));
+        return GGML_STATUS_FAILED;
+    }
+    memcpy(dst->data, o.data(), (size_t) M * T * sizeof(float));
+    return GGML_STATUS_SUCCESS;
+}
+
 /*
  * dst[m, n] = sum_k src0[k, m] * src1[k, n]
  *
  * Uses nb[] strides instead of assuming contiguous layout: weights can be views
  * (for example a transposed tensor), and ne0-contiguous arithmetic silently
  * produces wrong numbers for those.
- */
-static enum ggml_status o3npu_matmul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+ */static enum ggml_status o3npu_matmul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     const int64_t K = src0->ne[0];
     const int64_t M = src0->ne[1];
     const int64_t N = src1->ne[1];
@@ -255,6 +359,14 @@ static enum ggml_status o3npu_graph_compute(ggml_backend_t backend, ggml_cgraph 
         ggml_tensor * node = cgraph->nodes[i];
         switch (node->op) {
             case GGML_OP_MUL_MAT:
+                if (o3npu_can_matmul_npu(node)) {
+                    if (o3npu_matmul_npu(node->src[0], node->src[1], node) == GGML_STATUS_SUCCESS) {
+                        break;
+                    }
+                    if (o3npu_npu_required()) {
+                        return GGML_STATUS_FAILED;
+                    }
+                }
                 if (!o3npu_can_matmul(node)) {
                     fprintf(stderr, "O3NPU: MUL_MAT shape/type not supported\n");
                     return GGML_STATUS_FAILED;
@@ -467,6 +579,10 @@ GGML_BACKEND_DL_SCORE_IMPL(o3npu_score)
 
 extern "C" int o3npu_debug_matmul(const struct ggml_tensor * a, const struct ggml_tensor * b, struct ggml_tensor * d) {
     return (int) o3npu_matmul(a, b, d);
+}
+
+extern "C" int o3npu_debug_npu_matmul(const struct ggml_tensor * a, const struct ggml_tensor * b, struct ggml_tensor * d) {
+    return (int) o3npu_matmul_npu(a, b, d);
 }
 
 /* debug export for the offline test: element-wise copy with broadcasting */

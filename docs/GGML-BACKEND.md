@@ -306,3 +306,50 @@ xnnlMatmulCreateGraph -> midaSubgraphInstantiate -> midaStreamLaunchSubgraph
    通常几次就能锁定参数顺序。
 
 在此之前，NPU 路径的代码不写死猜测的语义，避免产生看似可用实则错误的实现。
+
+---
+
+## 第四部分：NPU 路径接入（2026-10-30）
+
+第三部分最后一段"NPU 路径的代码不写死猜测的语义"已经被替换：语义不再靠猜，
+`docs/generated/mida_api.h` 与 `docs/generated/xnnl_api.h` 给出了完整结构体与函数原型。
+
+### 代码结构
+
+| 文件 | 作用 |
+|---|---|
+| `tools/npu/o3npu.c` | mida 绑定、设备缓冲池、subgraph 生命周期、`o3npu_matmul_run()` |
+| `tools/npu/xnnl_shim.cpp` | 唯一需要 C++ 的部分（`xnnlSetTensorDescriptor` 收 `std::string`） |
+| `tools/npu/o3npu.h` | 对外的 C 接口 |
+| `tools/npu/vendor/` | 从 `docs/generated/` 复制的 vendor 头（含 `mida_types.h`，可直接编译） |
+| `tools/probe/probe_npu_matmul.cpp` | 设备探针，走的就是后端同一条路径 |
+| `tools/ggml-o3npu/ggml-o3npu.cpp` | `GGML_OP_MUL_MAT` → NPU，失败自动回退参考实现 |
+
+### 环境变量
+
+| 变量 | 默认 | 含义 |
+|---|---|---|
+| `O3NPU_NPU` | `auto` | `auto` 能用就用；`0` 强制参考实现；`1` 必须成功 |
+| `O3NPU_TRANSPOSED_W` | `1` | `1` 权重保持 ggml 布局并让 xnnl 转置；`0` 由我们预转置 |
+| `O3NPU_L2B` / `O3NPU_VA` | `0` | `midaSubgraphExecParams` 的 l2bSize / vaSize |
+| `O3NPU_CU` / `O3NPU_FW_TIMEOUT` / `O3NPU_STRIPE` | `1` / `10000` / 空 | launch config |
+| `O3NPU_TRACE` | 关 | 打印 device/stream 与 `midaSubgraphExecPrintInfo` |
+
+### 构建
+
+```bash
+tools/probe/build.sh                 # -> /tmp/probe_npu_matmul (arm64)
+tools/ggml-o3npu/build.sh android    # -> /tmp/libggml-o3npu.so (arm64)
+tools/ggml-o3npu/build.sh host       # -> /tmp/libggml-o3npu-host.so (x86_64, 回归用)
+```
+
+### 已完成的主机回归
+
+- `selftest`：5 个 matmul + 3 个 copy 用例全部 OK（与改动前一致）。
+- `llama-perplexity -m smollm2-f16.gguf -f README.md -t 6 -c 128 --chunks 2`：
+  CPU `PPL = 4.1317`，经后端（参考实现回退）`PPL = 4.1319`，一致。
+
+### 尚未完成
+
+设备上的真实执行。判据与实验顺序见 `docs/NPU-MATMUL-API.md` §17 与本轮计划：
+先看 logcat 的模块加载，再跑 `probe_npu_matmul --sweep`，最后才是 `llama-cli`。

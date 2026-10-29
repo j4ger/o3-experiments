@@ -758,3 +758,73 @@ PPL 1.2729 证明的是 ggml 动态后端的接线、buffer 偏移与算子分�
 **"需要编译器"这个结论只对 NBG 整网交付成立；对 xnnl/xnlm/ggml 全都不成立。**
 kernel 是随 `libxnnl.so` 预编译下发的，686 个，覆盖 matmul / attention / norm /
 softmax / rope / quant / activation 全套。之前卡住的是**执行**，不是**编译**。
+
+---
+
+## 17. 执行链路的正确形态（离线静态分析，2026-10-30）
+
+第 11 节把 `xnnlMatmulCreateGraph` 产出的子图又包进 `midaGraphCreate` /
+`midaGraphAddSubgraphNode` / `midaGraphInstantiate` 再 launch。反编译显示这层包装
+是多余的，而且会丢掉子图自己的执行参数。
+
+### 17.1 `createGraphSpecializedN` 直接构建一个完整子图
+
+反编译（`docs/generated/decomp/createGraphSpecializedN.c`，
+源文件 `vendor/xring/ai/xnnl/bellv100/src/layers/matmul_specializedN.cpp`）：
+
+```
+xnnlInitTmaLsDesc(... "inTmaLsDesc")
+xnnlInitTmaLsDesc(... "weightTmaLsDesc")
+xnnlInitTmaLsDesc(... "outTmaLsDesc")
+xnnlUmdWrapper::TmaLsArgsInit(... "gwqTmaDesc")
+GraphManager::addQWaitNode(graph, subgraph, dep, 0)
+xnnlUmdWrapper::AddKernelNode(graph, &node, subgraph, 0, &midaKernelNodeParams)
+xnnlUmdWrapper::AddBarrierNode(graph, &node, subgraph, 0, &midaBarrierNodeParams)
+GraphManager::addQWaitNode(graph, subgraph, barrier, 1)
+xnnlUmdWrapper::AddL2bWriteNode(graph, &node, subgraph, 1, &midaRWL2BNodeParams)
+xnnlUmdWrapper::AddBarrierNode(graph, &node, subgraph, 1, &midaBarrierNodeParams)
+GraphManager::addFreeNode(graph, subgraph, ..., 1)
+```
+
+也就是说 `xnnlMatmulCreateGraph` 的第二个参数（`midaSubgraph_t`）**就是执行单元**：
+kernel node、barrier、L2B 读写、释放节点都已经加好了。
+调用方只需要：
+
+```
+midaSubgraphInstantiate(&exec, subgraph, &execParams)
+midaStreamLaunchSubgraphAsync(exec, &launchConfig, stream)
+midaStreamSynchronize(stream)
+```
+
+### 17.2 结构体语义（来自 `docs/generated/mida_api.h`）
+
+```c
+struct midaSubgraphExecParams {   /* 0x20 */
+    uint32_t l2bSize;       /* +0x00 */
+    uint32_t vaSize;        /* +0x04 */
+    uint32_t regFenceFlag;  /* +0x08 */
+    uint32_t regNum;        /* +0x0c */
+    midaSubgraphStackInfo stackInfo; /* +0x10 { uint64_t stack_size; midaMemory_t stack_mem; } */
+};
+
+struct midaSubgraphNodeParams {   /* 0x28 */
+    midaSubgraph_t        subgraph; /* +0x00 */
+    midaSubgraphExecParams execPara;/* +0x08 */
+};
+```
+
+`midaSubgraphInstantiate` 的第三个参数**必须非空**（`mida_xnumd_entrypoints.c` 里
+`if (param_2 != 0 && param_3 != 0)`，随后把 `param_3` 原样传给
+`SubgraphImpl::Instantiate`）。之前探针里的 `uint8_t snp[0x28]` 只在 offset 0 放了
+subgraph，`execPara` 全零；graph 路线又把子图包了一层，参数根本落不到子图上。
+
+### 17.3 对探针与后端的要求
+
+1. 直接对 `xnnlMatmulCreateGraph` 返回的 subgraph 调 `midaSubgraphInstantiate`；
+2. `execParams` 先传零，`midaSubgraphExecGetStackInfo` 拿到 `stack_size` 后分配
+   `stack_mem` 再 instantiate 一次；
+3. launch 用 `midaStreamLaunchSubgraphAsync`（同步版本返回 NOT_SUPPORTED）；
+4. `midaLaunchConfig.stripe_names[32]` 是每项 5 字节的字符串数组，先留空，失败再填。
+
+`tools/npu/o3npu.c` 已按这个顺序实现，`tools/probe/probe_npu_matmul.cpp` 与
+ggml 后端共用同一条路径。实机结果待补。
