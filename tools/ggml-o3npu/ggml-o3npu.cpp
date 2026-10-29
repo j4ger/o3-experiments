@@ -468,3 +468,8 @@ GGML_BACKEND_DL_SCORE_IMPL(o3npu_score)
 extern "C" int o3npu_debug_matmul(const struct ggml_tensor * a, const struct ggml_tensor * b, struct ggml_tensor * d) {
     return (int) o3npu_matmul(a, b, d);
 }
+
+/* debug export for the offline test: element-wise copy with broadcasting */
+extern "C" int o3npu_debug_copy(struct ggml_tensor * dst, const struct ggml_tensor * src) {
+    return (int) o3npu_copy(dst, src);
+}

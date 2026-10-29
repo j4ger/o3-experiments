@@ -63,6 +63,15 @@ K=1536 M= 128 N=   4 a=f16 b=f16  max|diff|=6.10e-05  OK
 
 （F16 的差异是 fp16 舍入，不是算法错误。）
 
+同一套单测还覆盖了 `CONT`/`CPY` 路径（与 `ggml_cpy` 对拍）：
+
+```
+copy -> f32 transposed=0 max|diff|=0 OK
+copy -> f16 transposed=0 max|diff|=0 OK
+copy -> f32 transposed=1 max|diff|=0 OK
+```
+
+
 还有一个 ggml 的约束值得记住：**`ggml_mul_mat` 不接受转置的 src0**
 （`GGML_ASSERT(!ggml_is_transposed(a))` 直接中止），所以"权重是转置视图"
 这个假设从一开始就不成立。
