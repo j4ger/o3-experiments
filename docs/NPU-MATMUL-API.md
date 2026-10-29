@@ -404,3 +404,61 @@ customerID   = 0x1000002b;
 也就是说：**"让 NPU 跑任意我们自己的模型"目前卡在"缺厂商编译器"这一层**，
 而不是卡在 API 细节上。继续深挖 xnnl 也许能绕过（例如手工构造 kernel program），
 但那是另一个量级的工程量。
+
+## 13. 决定性结论：NBG 必须由编译器生成
+
+### 13.1 `vxGenerateNBG` 做了什么（反编译 `libOpenVX.so`）
+
+```c
+if (nodeCount == 0) return -1;
+/* 图里若已含 binary 节点则拒绝 */
+if ((node->type | 2) == 0x75a003) { print("has binary in graph, can't genereate NBG"); }
+
+/* 关键：先 verify，再 process —— 这是编译器流水线 */
+setCompileMode(1);
+vxVerifyGraph(graph);
+setFlag(2);
+vxProcessGraph(graph);
+size = *(graph + 0x7a188);
+print("Generate NBG in memory Actual NBG size : %lld bytes", size);
+```
+
+也就是说 **NBG 不是"序列化现有图"，而是"跑一遍编译器再导出结果"**。
+`vxProcessGraph` 会调用 NN/TP 编译器，把网络编译成 NPU 的 command stream 与权重切片，
+最后 `vxoBinaryGraph_SaveNBGCacheBufferMemory` 才把这块缓存写成文件。
+
+### 13.2 NBG 容器里有什么
+
+从 `libOpenVX.so` 的符号与字符串可以完整列出：
+
+| 成分 | 证据 |
+|---|---|
+| 分段：basic / ioinfo / patchdata / table(+v1) / axisram / data_copy | `nbg_fmt_read_basic_section_data`、`nbg_fmt_adjust_ioinfo_section_data`、`nbg_fmt_adjust_patchdata_section_data`、`nbg_fmt_adjust_table_section_v1`、`nbg_fmt_read_axisram`、`nbg_fmt_read_data_copy` |
+| NN kernel stream + TP kernel stream | `"fail to get NBG size, NN kernel stream size is 0"` / `"... tp kernel stream size is 0"` |
+| weights/biases 切片 | `"... tp weights_biases sclice num is 0"` |
+| 设备数与每设备核数 | `"generate NBG, device count=%d, core count per-device"` |
+| 内存池 / AXI-SRAM / VIP-SRAM 地址映射 | `"generate NBG, memoryPool startAddress=0x%llx"`、`"map VIP-SRAM startAddress=0x%lx"` |
+| 输入输出表（含物理地址回填） | `"update input or output table, oldPhysical: 0x%08X, newPhysical: 0x%08X"` |
+| CRC 与结束标记 | `"NBG CRC Sum: 0x%08x"`、`"NBGEND"` |
+
+### 13.3 对"跑我们自己的模型"意味着什么
+
+要让 NPU 执行任意 matmul / 模型，必须提供一份 NBG；而 NBG 里的核心内容是
+**编译器生成的 NPU command stream**。手工构造它等价于：
+
+- 自己实现 VeriSilicon VIP9000 的指令编码、寄存器配置、DMA 描述符、SRAM 分配策略；
+- 自己完成算子切分与调度（`PolicyFunc` 里的 block M/K/N、split K、sdp count 等就是它的产物）。
+
+这不是"再逆向几个函数"的量级，而是**写一个编译器后端**。
+
+### 13.4 因此，三条路线的最终判定
+
+| 路线 | 判定 |
+|---|---|
+| 运行时现搭 xnnl 图 | ❌ 固件不执行（缺 kernel program，`midaErrorFWTimeout`） |
+| 手工构造 NBG | ❌ 等价于实现编译器后端 |
+| 用厂商编译器生成 NBG | ⭕ 唯一可行，但工具未获得 |
+| **CPU（ggml）** | ✅ **已可用**（SmolLM2-135M Q4：pp32 323 / tg16 184 t/s） |
+
+**离线能做的逆向到此完成**：不是"没找到方法"，而是**找到了边界**——
+在这台设备上，绕过厂商编译器去驱动 NPU 的成本高于收益。
