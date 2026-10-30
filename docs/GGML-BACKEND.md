@@ -51,7 +51,7 @@ O3NPU: backend created
 
 ### 离线单测
 
-`tools/ggml-o3npu/selftest.cpp` 直接对拍我们的 matmul 与 `ggml_mul_mat`：
+`tools/ggml-o3npu/selftest.sh` 一键构建并运行（内部用 `selftest.cpp` 对拍我们的 matmul 与 `ggml_mul_mat`）：
 
 ```
 K=  64 M=  32 N=   8 a=f32 b=f32  max|diff|=2.38e-06  OK
