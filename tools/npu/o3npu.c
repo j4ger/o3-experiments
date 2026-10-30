@@ -446,6 +446,10 @@ o3npu_matmul_t * o3npu_matmul_open(void) {
     midaDeviceConfig cfg;
     fill_devcfg(&cfg);
     int rc = a->device_get(&m->dev, 0, &cfg);
+    if (rc == 0 && m->dev && env_int("O3NPU_RESET", 0) && a->device_reset) {
+        int rr = a->device_reset(m->dev);
+        if (m->trace) printf("o3npu: midaDeviceReset -> %d\n", rr);
+    }
     if (rc != 0 || !m->dev) {
         snprintf(m->err, sizeof m->err, "midaDeviceGet -> %s", err_str(a, rc));
         free(m);
