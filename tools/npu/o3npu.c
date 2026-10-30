@@ -405,6 +405,7 @@ struct o3npu_matmul {
     struct dbuf  in;
     struct dbuf  w;
     struct dbuf  out;
+    struct dbuf  stack;
     int          trace;
     int          transposed_w;   /* 1: weight stays in ggml layout */
     char         err[256];
@@ -677,6 +678,19 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     memset(&ep, 0, sizeof ep);
     ep.l2bSize = (uint32_t) env_int("O3NPU_L2B", 0);
     ep.vaSize  = (uint32_t) env_int("O3NPU_VA", 0);
+
+    {
+        uint64_t stack_sz = (uint64_t) env_int("O3NPU_STACK", 0);
+        if (stack_sz) {
+            int sr = dbuf_reserve(a, m->dev, &m->stack, stack_sz, "o3stack");
+            if (m->trace) printf("o3npu: stack reserve %llu -> %d\n", (unsigned long long) stack_sz, sr);
+            if (sr == 0) {
+                ep.stackInfo.stack_size = stack_sz;
+                ep.stackInfo.stack_mem  = m->stack.mem;
+                if (m->trace) printf("o3npu: provided stack %llu bytes\n", (unsigned long long) stack_sz);
+            }
+        }
+    }
 
     midaSubgraphExec_t exec = NULL;
     rc = a->sub_instantiate(&exec, sub, &ep);
