@@ -18,6 +18,8 @@
 /* xnnl_shim.cpp */
 extern int  o3xnnl_open(void ** out, void * mida_device);
 extern void o3xnnl_close(void * handle);
+extern int  o3xnnl_rmsnorm(void * handle, void * subgraph, int K,
+                           const void * x, const void * w, void * y);
 extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
                                 const int in_dims[4], const void * in_ptr,
                                 const int w_dims[4], const void * w_ptr,
@@ -778,6 +780,105 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
 
     a->sub_exec_destroy(exec);
     a->sub_destroy(sub);
+    return 0;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* minimal RMSNorm probe (does not touch the ggml backend)             */
+/* ------------------------------------------------------------------ */
+
+int o3npu_rmsnorm_test(int K, int trace) {
+    struct mida_api * a = mida_get();
+    if (!a) return -1;
+
+    midaDeviceConfig cfg;
+    fill_devcfg(&cfg);
+    midaDevice_t dev = NULL;
+    int rc = a->device_get(&dev, 0, &cfg);
+    if (rc != 0 || !dev) { printf("rmsnorm device -> %d\n", rc); return -2; }
+
+    midaStreamConfig sc;
+    memset(&sc, 0, sizeof sc);
+    sc.type = 1;
+    midaStream_t st = NULL;
+    rc = a->stream_create(&st, dev, &sc);
+    if (rc != 0) { printf("rmsnorm stream -> %d\n", rc); return -3; }
+
+    void * xh = NULL;
+    if (o3xnnl_open(&xh, dev) != 0) return -4;
+
+    struct dbuf in, w, out;
+    memset(&in, 0, sizeof in);  in.fd = -1;
+    memset(&w, 0, sizeof w);    w.fd = -1;
+    memset(&out, 0, sizeof out); out.fd = -1;
+    if (dbuf_reserve(a, dev, &in,  (uint64_t) K * 2, "rin")  != 0) return -5;
+    if (dbuf_reserve(a, dev, &w,   (uint64_t) K * 2, "rw")   != 0) return -5;
+    if (dbuf_reserve(a, dev, &out, (uint64_t) K * 2, "rout") != 0) return -5;
+
+    uint16_t * pi = (uint16_t *) in.cpu;
+    uint16_t * pw = (uint16_t *) w.cpu;
+    for (int i = 0; i < K; i++) {
+        pi[i] = 0x3C00;   /* 1.0 */
+        pw[i] = 0x3C00;
+    }
+    a->mem_cache_end(in.mem);
+    a->mem_cache_end(w.mem);
+    a->mem_cache_end(out.mem);
+
+    midaSubgraphConfig subcfg;
+    memset(&subcfg, 0, sizeof subcfg);
+    midaSubgraph_t sub = NULL;
+    rc = a->sub_create(&sub, dev, &subcfg);
+    if (rc != 0) { printf("rmsnorm subgraph -> %d\n", rc); return -6; }
+
+    rc = o3xnnl_rmsnorm(xh, sub, K, (const void *) in.va, (const void *) w.va, (void *) out.va);
+    printf("rmsnorm create -> %d\n", rc);
+    if (rc != 0) return -7;
+
+    midaSubgraphExecParams ep;
+    memset(&ep, 0, sizeof ep);
+    midaSubgraphExec_t ex = NULL;
+    rc = a->sub_instantiate(&ex, sub, &ep);
+    printf("rmsnorm instantiate -> %d\n", rc);
+    if (rc != 0) return -8;
+
+    midaSubgraphStackInfo si;
+    memset(&si, 0, sizeof si);
+    int sr = a->sub_exec_stack_info ? a->sub_exec_stack_info(ex, &si) : -1;
+    printf("rmsnorm stack_info -> %d size=%llu\n", sr, (unsigned long long) si.stack_size);
+
+    midaLaunchConfig lc;
+    memset(&lc, 0, sizeof lc);
+    lc.cu_num = 1;
+    lc.ddr_ratio = 1.0f;
+    lc.fw_timeout = 10000;
+    lc.name = "o3rms";
+    rc = a->stream_launch_subgraph_async(ex, &lc, st);
+    printf("rmsnorm launch -> %d\n", rc);
+    if (rc == 0) {
+        rc = a->stream_sync(st);
+        printf("rmsnorm sync -> %d (%s)\n", rc, err_str(a, rc));
+    }
+    (void) trace;
+    return rc;
+}
+
+
+int o3npu_limits(void) {
+    struct mida_api * a = mida_get();
+    if (!a || !a->device_get_limit) { printf("no device_get_limit\n"); return -1; }
+    midaDeviceConfig cfg;
+    fill_devcfg(&cfg);
+    midaDevice_t dev = NULL;
+    int rc = a->device_get(&dev, 0, &cfg);
+    if (rc != 0 || !dev) { printf("device -> %d\n", rc); return -2; }
+    for (int i = 0; i < 12; i++) {
+        uint64_t v = 0;
+        int r = a->device_get_limit(dev, i, &v);
+        printf("limit[%d] rc=%d value=%llu (0x%llx)\n", i, r,
+               (unsigned long long) v, (unsigned long long) v);
+    }
     return 0;
 }
 

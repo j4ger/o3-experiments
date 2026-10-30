@@ -970,3 +970,54 @@ API 形态不是差异点：subgraph 路径、graph 路径、厂家自己的 gra
 解锁后最有价值的一步：**在厂家自己的进程里挂钩**（Frida / `LD_PRELOAD`），
 抓一次真实成功的 `midaGraphAddSubgraphNode` / `midaStreamLaunchGraphAsync` 参数，
 和我们的逐字段对比——这比继续盲试有效得多。
+
+---
+
+## 20. 突破：RMSNorm 能跑，matmul 不能（2026-10-31 01:21）
+
+用 `xnnlRMSNormalizationCreateGraph` 做了一个最小对照实验：
+
+```
+== rmsnorm probe K=576 ==
+rmsnorm create -> 0
+rmsnorm instantiate -> 0
+rmsnorm stack_info -> 1 size=0
+rmsnorm launch -> 0
+rmsnorm sync -> 0 (0 (midaSuccess))
+RESULT ok (rc=0)
+```
+
+**NPU 能执行 kernel，launch/sync 路径本身没有问题。**
+
+同时 XNNL 打出三条 tiling 警告（RMSNorm 自己的 L2B 太大，退化为 DDR TMA）：
+
+```
+W [host_pipeline_creator.cpp:243]: user indicates L2B reserved Bytes is bigger than L2bMaxSize! tile failed!
+W [host_pipeline_creator.cpp:1022]: tiling failed! the L2B will be bypassed!!!
+W [host_pipeline_creator.cpp:1138]: tile failed, just launch kernel once and user's tma will be from/to ddr
+```
+
+### 20.1 matmul 与 RMSNorm 的差别
+
+matmul 运行时**没有**任何 XNNL 警告，直接 `stack mem is null` → 固件
+`fail status 3 2`。说明问题在 `xnnlMatmulCreateGraph` 内部选择的 kernel/切分，
+而不是 launch。
+
+已知差别：
+
+| | RMSNorm | matmul |
+|---|---|---|
+| 权重描述符 | `[1,1,1,K]` | `[1,1,K,M]` 或 `[1,1,M,K]` |
+| 额外参数 | eps/axis | `transposedW`、epilogue、`uint32_t` |
+| 权重预处理 | 无 | **可能需要 `xnnlMatmulDataReorder`** |
+
+`libxnnl.so` 导出：
+
+- `xnnlMatmulGetDataReorderSize`
+- `xnnlMatmulDataReorder`
+- `xnnlGemmSplitMNKernelReorder` / `xnnlGetGemmSplitMNKernelReorderSize`
+- `xnnlGemmSplitKGwDataReorder` / `xnnlGemmSplitKGetGwDataReorderSize`
+
+vendor 的 `WeightImpl::parseLayer` 很可能在加载权重时调用了这些 reorder，
+而我们的 probe 直接把原始 fp16 权重喂给 `xnnlMatmulCreateGraph`。
+**下一步就验证这一点。**

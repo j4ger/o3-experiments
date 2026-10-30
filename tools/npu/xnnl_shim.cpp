@@ -35,6 +35,8 @@ struct o3xnnl {
     int (*create_epl)(xnnlEpilogueDescriptor_t *);
     int (*destroy_epl)(xnnlEpilogueDescriptor_t);
     int (*set_epl)(xnnlEpilogueDescriptor_t, int, int, int, int, int, int, int, int, int, int);
+    int (*rmsnorm)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *,
+                   xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *, int, float, int);
     int (*matmul)(xnnlHandle_t, void *, xnnlTensorDescriptor_t, const void *,
                   xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, const void *,
                   const void *, const void *, xnnlTensorDescriptor_t, void *,
@@ -82,6 +84,7 @@ int o3xnnl_open(void ** out, void * mida_device) {
         return -2;
     }
 
+    sym(s->lib, "xnnlRMSNormalizationCreateGraph", (void **) &s->rmsnorm);
     if (sym(s->lib, "xnnlCreate", (void **) &s->create) ||
         sym(s->lib, "xnnlDestroy", (void **) &s->destroy) ||
         sym(s->lib, "xnnlCreateTensorDescriptor", (void **) &s->create_desc) ||
@@ -150,12 +153,14 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
     if ((rc = make_desc(s, &dw, w_dims, "w")) != 0) return rc;
     if ((rc = make_desc(s, &dout, out_dims, "out")) != 0) return rc;
 
-    if (s->create_epl(&epl) != 0 || !epl) {
-        return -5;
-    }
-    /* all epilogue features disabled */
-    if ((rc = s->set_epl(epl, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)) != 0) {
-        return -6;
+    if (!getenv("O3NPU_EPL_NULL")) {
+        if (s->create_epl(&epl) != 0 || !epl) {
+            return -5;
+        }
+        /* all epilogue features disabled */
+        if ((rc = s->set_epl(epl, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)) != 0) {
+            return -6;
+        }
     }
 
     rc = s->matmul(s->handle, (void *) subgraph,
@@ -173,3 +178,19 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
 }
 
 } /* extern "C" */
+
+extern "C" int o3xnnl_rmsnorm(void * handle, void * subgraph, int K,
+                   const void * x, const void * w, void * y) {
+    struct o3xnnl * s = (struct o3xnnl *) handle;
+    if (!s || !s->rmsnorm) {
+        return -1;
+    }
+    int dims[4] = { 1, 1, 1, K };
+    xnnlTensorDescriptor_t xd = nullptr, wd = nullptr, yd = nullptr;
+    if (make_desc(s, &xd, dims, "rin") != 0) return -2;
+    if (make_desc(s, &wd, dims, "rw")  != 0) return -2;
+    if (make_desc(s, &yd, dims, "rout")!= 0) return -2;
+    int rc = s->rmsnorm(s->handle, subgraph, 0, xd, x, wd, w, yd, y, 0, 1e-6f, 0);
+    s->destroy_desc(xd); s->destroy_desc(wd); s->destroy_desc(yd);
+    return rc;
+}

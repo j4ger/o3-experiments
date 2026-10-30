@@ -19,6 +19,9 @@
  */
 #include "o3npu.h"
 
+extern "C" int o3npu_rmsnorm_test(int K, int trace);
+extern "C" int o3npu_limits(void);
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -128,12 +131,18 @@ static int run_one(o3npu_matmul_t * mm, int K, int M, int T, int verbose) {
 int main(int argc, char ** argv) {
     int K = 576, M = 576, T = 1;
     bool sweep = false;
+    bool rms = false;
     int  transposed = -1;
 
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--sweep") {
             sweep = true;
+        } else if (a == "--rms") {
+            rms = true;
+        } else if (a == "--limits") {
+            return o3npu_limits();
+
         } else if (a == "--transposed" && i + 1 < argc) {
             transposed = atoi(argv[++i]);
         } else if (a == "--k" && i + 1 < argc) {
@@ -146,6 +155,13 @@ int main(int argc, char ** argv) {
             printf("usage: %s [K M T] [--sweep] [--transposed 0|1]\n", argv[0]);
             return 0;
         }
+    }
+
+    if (rms) {
+        printf("== rmsnorm probe K=%d ==\n", K);
+        int rc = o3npu_rmsnorm_test(K, 1);
+        printf("RESULT %s (rc=%d)\n", rc == 0 ? "ok" : "failed", rc);
+        return rc == 0 ? 0 : 4;
     }
 
     if (transposed >= 0) {
