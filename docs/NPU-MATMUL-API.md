@@ -828,3 +828,75 @@ subgraph，`execPara` 全零；graph 路线又把子图包了一层，参数根�
 
 `tools/npu/o3npu.c` 已按这个顺序实现，`tools/probe/probe_npu_matmul.cpp` 与
 ggml 后端共用同一条路径。实机结果待补。
+
+---
+
+## 18. 实机结果（2026-10-31）：构图成功，固件拒绝执行
+
+完整记录见 `artifacts/probe-logs/2026-10-31-npu/RESULTS.md`。
+
+### 18.1 已经确认的三件事
+
+1. **64 个 kernel 模块真的加载了**
+   `[XNNL]: [handle.cpp:81]:Created handle with 64 discrete ELF modules`
+2. **内存路径要改用 `midaMemoryAlloc(flag=5)`**
+   它同时返回 CPU 指针和非零设备 VA；vendor 的 `WeightImpl::parseLayer` 用的就是
+   `midaMemoryAlloc(&mem, dev, size, 5, 0, "layerBuf")`。
+   旧的 `flag=1 + AddressReserve + MapWithAddr` 可以放弃。
+3. **构图与实例化全部成功**
+   `xnnlMatmulCreateGraph` → 0，`midaSubgraphInstantiate` → 0，
+   `midaStreamLaunchSubgraphAsync` → 0；只有 `midaStreamSynchronize` 失败。
+
+### 18.2 固件返回什么
+
+```
+E kernel_runtime: [ipc_driver.cpp:174]:firmware response fail status 3 2
+E kernel_runtime: [stream_impl.cpp:628]:wait task failed 0 2
+E kernel_runtime: [stream_impl.cpp:1229]:item run failed...
+```
+
+伴随 `xr_dfx: coreid[NPU] exception[NPU_S_EXCEPTION] sub_exception[NPU_S_LOCKUP]`。
+`midaErrorLaunchFailure(14)`；早期 flag=1 的路径是 `FWTimeout(10)`。
+
+### 18.3 已穷举且无效的变量
+
+`midaDeviceConfig` 的 count/mode、`l2bSize`(0–32MB)、`vaSize`(0–256MB)、
+`cu_num`(1/2/4)、`performance_level`(0–3)、`ddr_ratio`(0/0.5/1)、
+`stripe_names`、launch config 传 NULL、`_UMD_FACTORY_CU_MASK`、
+`_UMD_FACTORY_DSMEM_LARGE`、四种权重布局组合 —— 结果全部是 14。
+
+形状从 8×8 到 576×49152 全部一致地失败，说明与 shape 无关。
+
+### 18.4 两个新线索
+
+- `midaSubgraphExecGetStackInfo(exec, &info)` 返回 **1（失败）**，size=0。
+  反编译显示 `SubgraphExecImpl::Instantiate` 在 `stack_size==0` 时会自己
+  `MemoryImpl::Alloc(..., 4, "NPU_KernelStack")`，所以不是我们没给栈。
+- `XRingXnnApi::initVppXnn("sample.bell")` 在
+  `XnnEngineImpl::Init` 内 SIGSEGV（`tombstone_19`），
+  栈为 `Xnn_RuntimeDeserializeEngineFromXnnPlan` → `XnnEngineImpl::Init`。
+  `sample.bell` 与本机 runtime 版本不匹配，Track C oracle 暂不可用。
+
+### 18.5 修正后的判定
+
+| 环节 | 状态 |
+|---|---|
+| kernel 加载 | ✅ 64 模块 |
+| 设备内存 | ✅ flag=5，CPU ptr + device VA |
+| 图构建 | ✅ 所有测试形状返回 0 |
+| subgraph 实例化 | ✅ 返回 0 |
+| 任务下发 | ✅ launch 返回 0 |
+| 固件执行 | ❌ `fail status 3 2` / `NPU_S_LOCKUP` |
+
+**卡点不再是"有没有编译器"，也不是 launch 参数字段。**
+剩余未知集中在 `SubgraphExecImpl::Instantiate` 生成的 **IB 命令缓冲**与固件契约：
+要么 IB 里有固件不接受的字段，要么缺少一个 vendor 内部才有的初始化步骤。
+
+### 18.6 下一步优先级
+
+1. 反编译 `SubgraphExecImpl::Instantiate` 里 `NPU_IBCmd` 的填充逻辑，
+   对照 `npu_launch_task_para` 的 0x54 字节消息逐字段核对；
+2. 找一台能跑 vendor AI 服务的进程上下文（`system_app`）做对照，
+   排除"固件只接受特定 domain/uid"；
+3. 用 `XNLM` 真实模型（Qwen3）跑一次，作为"NPU 能执行"的 oracle；
+4. 以上都不行时，才考虑 `libOpenVX`/NBG 那条 AOT 路线。

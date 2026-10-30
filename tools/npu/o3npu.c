@@ -25,6 +25,13 @@ extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
                                 int transposed_w);
 
 /* ------------------------------------------------------------------ */
+/* small helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+static int env_int(const char * name, int def);
+static void fill_devcfg(midaDeviceConfig * c);
+
+/* ------------------------------------------------------------------ */
 /* fp16 -> fp32 (no ggml dependency here)                              */
 /* ------------------------------------------------------------------ */
 
@@ -220,7 +227,8 @@ static int dbuf_reserve(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
     }
     dbuf_free(a, d);
 
-    int rc = a->mem_alloc(&d->mem, dev, want, 1, 0, name);
+    int mflag = env_int("O3NPU_MEM_FLAG", 5);
+    int rc = a->mem_alloc(&d->mem, dev, want, (uint32_t) mflag, 0, name);
     if (rc != 0 || !d->mem) {
         fprintf(stderr, "o3npu: midaMemoryAlloc(%s,%llu) -> %s\n", name,
                 (unsigned long long) want, err_str(a, rc));
@@ -228,21 +236,30 @@ static int dbuf_reserve(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
     }
     d->cpu = a->mem_ptr(d->mem);
     d->fd  = a->mem_fd(d->mem);
+    d->va  = a->mem_va ? a->mem_va(d->mem) : 0;
 
-    rc = a->addr_reserve(&d->addr, dev, want, 2, 0);
-    if (rc != 0 || !d->addr) {
-        fprintf(stderr, "o3npu: midaAddressReserve(%s) -> %s\n", name, err_str(a, rc));
-        return -1;
-    }
-    d->va = a->addr_va(d->addr);
+    if (d->va == 0) {
+        /* some allocation flags do not expose a VA; bind the dma-buf to a
+         * reserved address instead (the path used by the earlier probes) */
+        rc = a->addr_reserve(&d->addr, dev, want, 2, 0);
+        if (rc != 0 || !d->addr) {
+            fprintf(stderr, "o3npu: midaAddressReserve(%s) -> %s\n", name, err_str(a, rc));
+            return -1;
+        }
+        d->va = a->addr_va(d->addr);
 
-    midaMemory_t mapped = NULL;
-    rc = a->mem_map_addr(&mapped, d->fd, want, 0, d->addr);
-    if (rc != 0) {
-        fprintf(stderr, "o3npu: midaMemoryMapWithAddr(%s) -> %s\n", name, err_str(a, rc));
-        return -1;
+        midaMemory_t mapped = NULL;
+        rc = a->mem_map_addr(&mapped, d->fd, want, 0, d->addr);
+        if (rc != 0) {
+            fprintf(stderr, "o3npu: midaMemoryMapWithAddr(%s) -> %s\n", name, err_str(a, rc));
+            return -1;
+        }
     }
     d->size = want;
+    if (getenv("O3NPU_TRACE")) {
+        printf("o3npu: buf %-7s size=%llu flag=%d cpu=%p fd=%d va=0x%llx\n",
+               name, (unsigned long long) want, mflag, d->cpu, d->fd, (unsigned long long) d->va);
+    }
     if (!d->cpu || d->va == 0) {
         fprintf(stderr, "o3npu: buffer %s cpu=%p va=0x%llx\n", name, d->cpu,
                 (unsigned long long) d->va);
@@ -280,7 +297,7 @@ o3npu_t * o3npu_open(void) {
     }
     n->api = a;
     midaDeviceConfig cfg;
-    memset(&cfg, 0, sizeof cfg);
+    fill_devcfg(&cfg);
     int rc = a->device_get(&n->dev, 0, &cfg);
     if (rc != 0 || !n->dev) {
         fprintf(stderr, "o3npu: midaDeviceGet -> %s\n", err_str(a, rc));
@@ -383,6 +400,16 @@ static int env_int(const char * name, int def) {
     return (int) strtol(v, NULL, 0);
 }
 
+static void fill_devcfg(midaDeviceConfig * c) {
+    memset(c, 0, sizeof *c);
+    c->type        = (uint32_t) env_int("O3NPU_DEV_TYPE", 0);
+    c->mode        = (uint32_t) env_int("O3NPU_DEV_MODE", 0);
+    c->flag        = (uint32_t) env_int("O3NPU_DEV_FLAG", 0);
+    c->count       = (uint32_t) env_int("O3NPU_DEV_COUNT", 0);
+    c->dsmem_large = (uint32_t) env_int("O3NPU_DEV_DSMEM", 0);
+    c->power_policy= (uint32_t) env_int("O3NPU_DEV_POWER", 0);
+}
+
 o3npu_matmul_t * o3npu_matmul_open(void) {
     struct mida_api * a = mida_get();
     if (!a) {
@@ -398,7 +425,7 @@ o3npu_matmul_t * o3npu_matmul_open(void) {
     m->transposed_w = env_int("O3NPU_TRANSPOSED_W", 1);
 
     midaDeviceConfig cfg;
-    memset(&cfg, 0, sizeof cfg);
+    fill_devcfg(&cfg);
     int rc = a->device_get(&m->dev, 0, &cfg);
     if (rc != 0 || !m->dev) {
         snprintf(m->err, sizeof m->err, "midaDeviceGet -> %s", err_str(a, rc));
@@ -561,7 +588,9 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     if (a->sub_exec_stack_info) {
         midaSubgraphStackInfo si;
         memset(&si, 0, sizeof si);
-        if (a->sub_exec_stack_info(exec, &si) == 0 && si.stack_size > 0 && !si.stack_mem) {
+        int sir = a->sub_exec_stack_info(exec, &si);
+        if (m->trace) printf("o3npu: stack_info rc=%d size=%llu mem=%p\n", sir, (unsigned long long) si.stack_size, si.stack_mem);
+        if (sir == 0 && si.stack_size > 0 && !si.stack_mem) {
             struct dbuf stack;
             memset(&stack, 0, sizeof stack);
             stack.fd = -1;
@@ -579,20 +608,24 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         }
     }
 
+    if (m->trace && a->sub_print_info) {
+        printf("o3npu: midaSubgraphPrintInfo -> %d\n", a->sub_print_info(sub));
+    }
     if (m->trace && a->sub_exec_print_info) {
-        a->sub_exec_print_info(exec);
+        printf("o3npu: midaSubgraphExecPrintInfo -> %d\n", a->sub_exec_print_info(exec));
     }
 
     midaLaunchConfig lc;
     memset(&lc, 0, sizeof lc);
     lc.cu_num = (uint32_t) env_int("O3NPU_CU", 1);
     lc.performance_level = (uint32_t) env_int("O3NPU_PERF", 0);
-    lc.ddr_ratio = 1.0f;
+    lc.ddr_ratio = (float) env_int("O3NPU_DDR", 100) / 100.0f;
     lc.fw_timeout = (uint32_t) env_int("O3NPU_FW_TIMEOUT", 10000);
     lc.name = "o3npu";
     fill_stripe_names(&lc);
 
-    rc = a->stream_launch_subgraph_async(exec, &lc, m->stream);
+    midaLaunchConfig * lcp = env_int("O3NPU_LC_NULL", 0) ? NULL : &lc;
+    rc = a->stream_launch_subgraph_async(exec, lcp, m->stream);
     if (rc != 0) {
         snprintf(m->err, sizeof m->err, "midaStreamLaunchSubgraphAsync -> %s", err_str(a, rc));
         a->sub_exec_destroy(exec);

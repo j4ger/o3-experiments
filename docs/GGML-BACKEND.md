@@ -353,3 +353,13 @@ tools/ggml-o3npu/build.sh host       # -> /tmp/libggml-o3npu-host.so (x86_64, �
 
 设备上的真实执行。判据与实验顺序见 `docs/NPU-MATMUL-API.md` §17 与本轮计划：
 先看 logcat 的模块加载，再跑 `probe_npu_matmul --sweep`，最后才是 `llama-cli`。
+
+### 实机结果（2026-10-31）
+
+后端与探针已在设备上跑通到"图构建 + 实例化 + 下发"：
+`xnnlMatmulCreateGraph`、`midaSubgraphInstantiate`、`midaStreamLaunchSubgraphAsync`
+全部返回 0，`midaStreamSynchronize` 返回 `midaErrorLaunchFailure(14)`，
+固件侧是 `firmware response fail status 3 2` / `NPU_S_LOCKUP`。
+
+因此 backend 目前等价于：**NPU 路径已接好，但固件拒绝执行**，会自动回退到参考循环。
+详见 `docs/NPU-MATMUL-API.md` §18 与 `artifacts/probe-logs/2026-10-31-npu/RESULTS.md`。
