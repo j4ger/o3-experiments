@@ -1101,3 +1101,22 @@ adb shell "/data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; O3NPU_MEM_F
   （参数是 descriptor + epilogue + `xnnlWeightPatch` 数组）；
 - `xnnlMatmulCreateGraph` 第 15 个参数（`uint32_t`）的语义；
 - 因此 matmul 的 NPU 路径暂时不可用，ggml backend 会自动回退参考实现。
+
+### 22.5 下次上机第一件事（工具已就绪）
+
+```bash
+O3NPU_MEM_FLAG=5 O3NPU_XNNL_LOG=0 ./probe_npu_matmul --k 576 --m 576 --t 1
+```
+
+`O3NPU_XNNL_LOG=0` 会调用 `XNNLLogger::set_log_level`，打开 matmul dispatcher 里
+本来被默认级别压掉的日志：
+
+```
+Tensor Params: input.shape[] / weight.shape[] / output.shape[]
+attributes: M=.., K=.., N=.., block M/K/N, split K, transposedW_
+kernel name: ...
+policyMode_=...
+```
+
+拿到 `kernel name` 和 `M/K/N` 后，就能直接判断是 specializedN 还是 splitMN 分支、
+以及 kernel 期望的布局。这一步不需要再改代码。
