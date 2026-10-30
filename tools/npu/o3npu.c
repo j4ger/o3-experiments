@@ -102,6 +102,14 @@ struct mida_api {
     int  (*stream_create)(midaStream_t *, midaDevice_t, midaStreamConfig *);
     int  (*stream_destroy)(midaStream_t);
     int  (*stream_launch_subgraph_async)(midaSubgraphExec_t, midaLaunchConfig *, midaStream_t);
+
+    int  (*graph_create)(midaGraph_t *, midaDevice_t);
+    int  (*graph_destroy)(midaGraph_t);
+    int  (*graph_add_node)(midaGraphNode_t *, midaGraph_t, const midaGraphNode_t *, uint32_t, midaSubgraphNodeParams *);
+    int  (*graph_instantiate)(midaGraphExec_t *, midaGraph_t);
+    int  (*graph_exec_get_sub)(midaSubgraphExec_t *, midaGraphExec_t, midaGraphNode_t);
+    int  (*graph_exec_destroy)(midaGraphExec_t);
+    int  (*stream_launch_graph_async)(midaGraphExec_t, midaLaunchConfig *, midaStream_t);
     int  (*stream_sync)(midaStream_t);
 
     const char * (*error_name)(int);
@@ -166,6 +174,14 @@ static struct mida_api * mida_get(void) {
     a->stream_create = (int (*)(midaStream_t *, midaDevice_t, midaStreamConfig *)) need_sym(a->lib, "midaStreamCreate");
     a->stream_destroy= (int (*)(midaStream_t)) need_sym(a->lib, "midaStreamDestroy");
     a->stream_launch_subgraph_async = (int (*)(midaSubgraphExec_t, midaLaunchConfig *, midaStream_t)) need_sym(a->lib, "midaStreamLaunchSubgraphAsync");
+
+    a->graph_create = (int (*)(midaGraph_t *, midaDevice_t)) dlsym(a->lib, "midaGraphCreate");
+    a->graph_destroy = (int (*)(midaGraph_t)) dlsym(a->lib, "midaGraphDestroy");
+    a->graph_add_node = (int (*)(midaGraphNode_t *, midaGraph_t, const midaGraphNode_t *, uint32_t, midaSubgraphNodeParams *)) dlsym(a->lib, "midaGraphAddSubgraphNode");
+    a->graph_instantiate = (int (*)(midaGraphExec_t *, midaGraph_t)) dlsym(a->lib, "midaGraphInstantiate");
+    a->graph_exec_get_sub = (int (*)(midaSubgraphExec_t *, midaGraphExec_t, midaGraphNode_t)) dlsym(a->lib, "midaGraphExecGetSubgraphExec");
+    a->graph_exec_destroy = (int (*)(midaGraphExec_t)) dlsym(a->lib, "midaGraphExecDestroy");
+    a->stream_launch_graph_async = (int (*)(midaGraphExec_t, midaLaunchConfig *, midaStream_t)) dlsym(a->lib, "midaStreamLaunchGraphAsync");
     a->stream_sync   = (int (*)(midaStream_t)) need_sym(a->lib, "midaStreamSynchronize");
 
     a->error_name    = (const char * (*)(int)) dlsym(a->lib, "midaGetErrorName");
@@ -571,6 +587,90 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         snprintf(m->err, sizeof m->err, "xnnlMatmulCreateGraph -> %d", rc);
         a->sub_destroy(sub);
         return -4;
+    }
+
+    const char * path_mode = getenv("O3NPU_PATH");
+    if (path_mode && strcmp(path_mode, "graph") == 0) {
+        if (!a->graph_create || !a->graph_add_node || !a->graph_instantiate ||
+            !a->stream_launch_graph_async) {
+            snprintf(m->err, sizeof m->err, "graph API missing");
+            a->sub_destroy(sub);
+            return -8;
+        }
+
+        midaSubgraphExecParams gep;
+        memset(&gep, 0, sizeof gep);
+        gep.l2bSize = (uint32_t) env_int("O3NPU_L2B", 0);
+        gep.vaSize  = (uint32_t) env_int("O3NPU_VA", 0);
+
+        midaSubgraphNodeParams np;
+        memset(&np, 0, sizeof np);
+        np.subgraph = sub;
+        np.execPara = gep;
+
+        midaGraph_t graph = NULL;
+        midaGraphNode_t node = NULL;
+        midaGraphExec_t gexec = NULL;
+        int g1 = a->graph_create(&graph, m->dev);
+        int g2 = (g1 == 0) ? a->graph_add_node(&node, graph, NULL, 0, &np) : g1;
+        int g3 = (g2 == 0) ? a->graph_instantiate(&gexec, graph) : g2;
+        if (m->trace) {
+            printf("o3npu: graph create=%d add=%d instantiate=%d graph=%p node=%p exec=%p\n",
+                   g1, g2, g3, graph, node, gexec);
+        }
+        if (g3 != 0 || !gexec) {
+            snprintf(m->err, sizeof m->err, "midaGraph path -> %d/%d/%d", g1, g2, g3);
+            a->sub_destroy(sub);
+            return -9;
+        }
+
+        midaSubgraphExec_t sub_exec = NULL;
+        if (env_int("O3NPU_GRAPH_SUB", 1)) {
+            int g4 = a->graph_exec_get_sub(&sub_exec, gexec, node);
+            if (m->trace) {
+                printf("o3npu: graph_exec_get_sub -> %d (%p)\n", g4, sub_exec);
+            }
+        }
+
+        midaLaunchConfig lc;
+        memset(&lc, 0, sizeof lc);
+        lc.cu_num = (uint32_t) env_int("O3NPU_CU", 1);
+        lc.performance_level = (uint32_t) env_int("O3NPU_PERF", 0);
+        lc.ddr_ratio = (float) env_int("O3NPU_DDR", 100) / 100.0f;
+        lc.fw_timeout = (uint32_t) env_int("O3NPU_FW_TIMEOUT", 10000);
+        lc.name = "o3npu";
+        fill_stripe_names(&lc);
+
+        midaLaunchConfig * lcp = env_int("O3NPU_LC_NULL", 0) ? NULL : &lc;
+        rc = sub_exec ? a->stream_launch_subgraph_async(sub_exec, lcp, m->stream)
+                      : a->stream_launch_graph_async(gexec, lcp, m->stream);
+        if (rc != 0) {
+            snprintf(m->err, sizeof m->err, "graph launch -> %s", err_str(a, rc));
+            if (a->graph_exec_destroy) a->graph_exec_destroy(gexec);
+            a->sub_destroy(sub);
+            return -6;
+        }
+
+        rc = a->stream_sync(m->stream);
+        if (rc != 0) {
+            snprintf(m->err, sizeof m->err, "midaStreamSynchronize -> %s", err_str(a, rc));
+            if (a->graph_exec_destroy) a->graph_exec_destroy(gexec);
+            a->sub_destroy(sub);
+            return -7;
+        }
+
+        dbuf_sync_cpu(a, &m->out);
+        {
+            const uint16_t * o = (const uint16_t *) m->out.cpu;
+            for (size_t i = 0, n = (size_t) M * T; i < n; i++) {
+                out_f32[i] = fp16_to_fp32(o[i]);
+            }
+        }
+        dbuf_sync_dev(a, &m->out);
+
+        if (a->graph_exec_destroy) a->graph_exec_destroy(gexec);
+        a->sub_destroy(sub);
+        return 0;
     }
 
     midaSubgraphExecParams ep;

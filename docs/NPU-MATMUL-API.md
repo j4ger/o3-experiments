@@ -900,3 +900,73 @@ E kernel_runtime: [stream_impl.cpp:1229]:item run failed...
    排除"固件只接受特定 domain/uid"；
 3. 用 `XNLM` 真实模型（Qwen3）跑一次，作为"NPU 能执行"的 oracle；
 4. 以上都不行时，才考虑 `libOpenVX`/NBG 那条 AOT 路线。
+
+---
+
+## 19. 厂家的调用链（静态逆向，2026-10-31）
+
+按"直接看厂家怎么调"的思路，从 `libxnlm.so` 往下挖。
+
+### 19.1 层次
+
+```
+libxnlm.so  (XNLM_Model_run → xnlm::Model::infer → ModelImpl)
+   ├── libxnnl.so   xnnlDecoderLayer::createGraph / xnnlLLMDecode ...
+   └── libxnumd.so  通过函数表直接调用 mida*
+```
+
+`libxnlm` 自己 dlsym 了整套 mida API（`strings` 可见 50 多个
+`Loaded the mida... symbol successfully`），包括：
+
+- graph 系：`midaGraphCreate`、`midaGraphAddSubgraphNode`、`midaGraphInstantiate`、
+  `midaGraphExecGetSubgraphExec`、`midaStreamLaunchGraphAsync`
+- subgraph 系：`midaSubgraphCreate`、`midaSubgraphInstantiate`、
+  `midaSubgraphExecGetStackInfo`、`midaStreamLaunchSubgraphAsync`
+- 内存系：`midaMemoryAlloc`、`midaMemoryGetDeviceVa`、`midaMemoryAddMap` 等
+
+### 19.2 `xnlm::ModelImpl::launchPrefillGraph`
+
+反编译（`/tmp/decomp-mp-prefill.md`）显示的标准流程：
+
+1. 逐层 `xnnlDecoderLayer::createGraph(...)` —— 构建每层子图；
+2. 对每层执行函数表 `+0x158` 的调用：
+   `f(subgraph, subgraphReleaseCallback, alloc, this+0x70, ...)`
+   —— 即把子图挂到 graph 上（带释放回调）；
+3. 之后统一 `midaGraphInstantiate` + `midaStreamLaunchGraphAsync`。
+
+`xnlm::ModelImpl::launchDecodeGraph` 是同一套，只有 batch/position 不同。
+
+### 19.3 我们复刻的结果
+
+在 `tools/npu/o3npu.c` 增加 `O3NPU_PATH=graph`：
+
+```
+midaGraphCreate            -> 0
+midaGraphAddSubgraphNode   -> 0
+midaGraphInstantiate       -> 0
+midaStreamLaunchGraphAsync -> 0
+midaStreamSynchronize      -> 14 (midaErrorLaunchFailure)
+```
+
+和 subgraph 路径**完全一样的 14**。`midaGraphExecGetSubgraphExec` 那一步会 SIGSEGV
+（可能需要传 `midaGraphNode_t` 的另一种句柄），暂未继续。
+
+### 19.4 这意味着什么
+
+API 形态不是差异点：subgraph 路径、graph 路径、厂家自己的 graph 组合方式，
+三者都返回 14。差异只可能来自：
+
+1. **子图里的 kernel node 参数**（xnnl 内部生成，我们没改过，但可能依赖某个我们没设的
+   `xnnlHandle` 状态）；
+2. **固件侧的准入**：模型/任务签名、进程 domain、或 NPU 的 secure 状态；
+3. **我们缺一个厂家内部的初始化步骤**（例如 `xnnlUmdWrapper` 的某个全局初始化）。
+
+### 19.5 下一步（需要设备解锁）
+
+设备重启后停在锁屏（`dumpsys user` = `RUNNING_LOCKED`），
+`dev.j4ger.o3root` / `dev.j4ger.o3chat` 在解锁前对 PackageManager 不可见，
+`am start` 返回 `aInfo is null`。需要先解锁，才能恢复 root 和 SELinux 规则。
+
+解锁后最有价值的一步：**在厂家自己的进程里挂钩**（Frida / `LD_PRELOAD`），
+抓一次真实成功的 `midaGraphAddSubgraphNode` / `midaStreamLaunchGraphAsync` 参数，
+和我们的逐字段对比——这比继续盲试有效得多。
