@@ -363,3 +363,16 @@ tools/ggml-o3npu/build.sh host       # -> /tmp/libggml-o3npu-host.so (x86_64, �
 
 因此 backend 目前等价于：**NPU 路径已接好，但固件拒绝执行**，会自动回退到参考循环。
 详见 `docs/NPU-MATMUL-API.md` §18 与 `artifacts/probe-logs/2026-10-31-npu/RESULTS.md`。
+
+### 最新状态（2026-10-31 01:25）
+
+- 已证明 **NPU 能执行 kernel**：`xnnlRMSNormalizationCreateGraph` 的
+  create/instantiate/launch/sync 全部返回 0，`sync -> midaSuccess`。
+- matmul 仍然失败：构图返回 0，但 launch 后固件 `fail status 3 2` /
+  `NPU_S_LOCKUP`。差别在 `xnnlMatmulCreateGraph` 内部的 kernel/切分/权重布局，
+  与 launch 参数无关。
+- 已确认 vendor 的权重带预重排布局（`reordered_weights` + `splitInfo`），
+  下一步是搞清 `xnnlMatmulDataReorder` / `xnnlGemmSplitMNKernelReorder` 的调用方式。
+
+所以 backend 目前的真实状态是：**接口全部接好，RMSNorm 类算子可用，
+matmul 仍会被固件拒绝，自动回退到参考实现**。

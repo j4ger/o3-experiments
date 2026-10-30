@@ -22,8 +22,8 @@ Planned: agent-style tool calling on top of the chat app.
 | Temporary root (no bootloader unlock, reboot clears it) | **works**, verified on `lhasa` / `OS4.0.26.0.XPNCNXM` |
 | NPU access from the `shell` domain with six targeted SELinux rules | **works**, `Enforcing` throughout |
 | `o3npu` driver (mida device, memory, subgraph) | **works** |
-| llama.cpp ggml backend | **correct on host** — perplexity matches the CPU backend; NPU execution still pending |
-| NPU matmul execution | xnnl builds the graph and mida accepts the launch, but the firmware never runs it (`midaErrorFWTimeout`). **This is not a compiler problem**: `libxnnl.so` embeds 64 precompiled ELF kernel modules / 686 kernels, loaded by `xnnlCreate` through `midaModuleLoadData`; only the optional NBG path needs a compiler, and that path's Vivante GC HAL cannot initialise on this Mali device. See `docs/NPU-MATMUL-API.md` §16. |
+| llama.cpp ggml backend | **correct on host** — perplexity matches the CPU backend; NPU path wired with automatic fallback (matmul blocked by firmware layout issue) |
+| NPU matmul execution | xnnl builds the graph and mida accepts the launch, but the firmware rejects matmul (`midaErrorLaunchFailure`, `fail status 3 2`). **RMSNorm runs end-to-end on the same path** (`sync -> midaSuccess`), so the launch stack is proven; matmul still needs the vendor weight layout / reorder. **This is not a compiler problem**: `libxnnl.so` embeds 64 precompiled ELF kernel modules / 686 kernels, loaded by `xnnlCreate` through `midaModuleLoadData`; only the optional NBG path needs a compiler, and that path's Vivante GC HAL cannot initialise on this Mali device. See `docs/NPU-MATMUL-API.md` §16. |
 
 ## Layout
 

@@ -1057,3 +1057,47 @@ RMSNorm 没有权重重排这一步，所以能跑通——这与实验结果完
 2. 在 `o3npu_matmul_run` 里：先 query reorder size → 分配 reorder buffer →
    调 `xnnlMatmulDataReorder` → 用 reordered 权重调 `xnnlMatmulCreateGraph`；
 3. 若 splitMN/splitK 路径还需要 `xnnlGemmSplitMNKernelReorder`，同样处理。
+
+---
+
+## 22. 当前状态与可复现步骤（2026-10-31）
+
+### 22.1 一句话结论
+
+`xnnl` 的图构建与 mida 的 instantiate/launch/sync 链路**已经全部打通**；
+**RMSNorm 能在 NPU 上执行并返回正确同步**，**matmul 仍会被 NPU 固件拒绝**
+（`midaErrorLaunchFailure` / `fail status 3 2` / `NPU_S_LOCKUP`）。
+因此"需要编译器"这个旧结论早已作废，剩下的只是 matmul 的权重布局/切分参数问题。
+
+### 22.2 复现命令
+
+```bash
+# 1. 设备：恢复 root（o3root 应用 -> "1. 获取临时 root"）
+#    然后应用 SELinux 规则（"2. 放行 NPU + 跑探针"，或手工 fixrules.sh）
+# 2. 构建
+tools/probe/build.sh                 # /tmp/probe_npu_matmul
+# 3. 对照实验：RMSNorm（应当成功）
+adb push /tmp/probe_npu_matmul /data/local/tmp/
+adb shell "/data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; O3NPU_MEM_FLAG=5 ./probe_npu_matmul --rms --k 576'"
+# 4. matmul（当前失败）
+adb shell "/data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; O3NPU_MEM_FLAG=5 O3NPU_TRANSPOSE_W=1 ./probe_npu_matmul --k 576 --m 576 --t 1'"
+```
+
+### 22.3 已确认的事实清单
+
+| # | 事实 | 证据 |
+|---|---|---|
+| 1 | `libxnnl.so` 内嵌 64 个 ELF 模块 / 686 个 kernel | `tools/npu/list-kernels.mjs`、logcat |
+| 2 | 设备上 `xnnlCreate` 加载全部 64 个模块 | logcat `Created handle with 64 discrete ELF modules` |
+| 3 | `midaMemoryAlloc(flag=5)` 给出 CPU 指针 + 设备 VA | `RESULTS.md` §2 |
+| 4 | graph 与 subgraph 两种 launch 路径都能返回 0 | §19 |
+| 5 | RMSNorm 端到端成功 | §20 |
+| 6 | matmul 在固件侧 `fail status 3 2`，每次一条 `NPU_S_LOCKUP` | §18 / §21 |
+| 7 | vendor 权重带预重排 `reordered_weights` + `splitInfo` | `weight_impl_parseLayer.c` |
+
+### 22.4 仍未解决
+
+- `xnnlMatmulDataReorder` / `xnnlGemmSplitMNKernelReorder` 的精确调用方式
+  （参数是 descriptor + epilogue + `xnnlWeightPatch` 数组）；
+- `xnnlMatmulCreateGraph` 第 15 个参数（`uint32_t`）的语义；
+- 因此 matmul 的 NPU 路径暂时不可用，ggml backend 会自动回退参考实现。
