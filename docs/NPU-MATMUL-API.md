@@ -1021,3 +1021,39 @@ matmul 运行时**没有**任何 XNNL 警告，直接 `stack mem is null` → �
 vendor 的 `WeightImpl::parseLayer` 很可能在加载权重时调用了这些 reorder，
 而我们的 probe 直接把原始 fp16 权重喂给 `xnnlMatmulCreateGraph`。
 **下一步就验证这一点。**
+
+---
+
+## 21. 为什么 matmul 不行而 RMSNorm 行：权重需要 reorder
+
+`xnnlMatmulDataReorder` 反编译出的参数：
+
+```c
+int xnnlMatmulDataReorder(
+    xnnlTensorDescriptor *inDesc, xnnlTensorDescriptor *wDesc,
+    xnnlTensorDescriptor *outDesc, xnnlEpilogueDescriptor *epl,
+    long *?, xnnlTensorDescriptor *?, void *?,
+    float *?, uchar *?, uint8_t);
+```
+
+配套还有 `xnnlMatmulGetDataReorderSize`（7 个参数）和
+`xnnlGemmSplitMNKernelReorder` / `xnnlGetGemmSplitMNKernelReorderSize`。
+
+vendor 的 `WeightImpl::parseLayer` 里每个权重都带一个
+**`reordered_weights` + `splitInfo`（xnnlWeightPatch）** 结构，
+是从模型文件里直接读出来的预重排布局（见
+`docs/generated/decomp/weight_impl_parseLayer.c` 第 930-990 行）。
+
+我们的 probe 把**原始 fp16 权重**直接传给 `xnnlMatmulCreateGraph`：
+- xnnl 返回 0（构图只检查形状）；
+- 但 kernel 的 TMA descriptor 按"已重排"的布局计算 stride；
+- 实际缓冲区是未重排的 → NPU 读到非法地址/跨步 → 固件 `fail status 3 2` / `NPU_S_LOCKUP`。
+
+RMSNorm 没有权重重排这一步，所以能跑通——这与实验结果完全吻合。
+
+### 21.1 下一步
+
+1. 反编译 `xnnlMatmulGetDataReorderSize` / `xnnlMatmulDataReorder` 的完整参数语义；
+2. 在 `o3npu_matmul_run` 里：先 query reorder size → 分配 reorder buffer →
+   调 `xnnlMatmulDataReorder` → 用 reordered 权重调 `xnnlMatmulCreateGraph`；
+3. 若 splitMN/splitK 路径还需要 `xnnlGemmSplitMNKernelReorder`，同样处理。
