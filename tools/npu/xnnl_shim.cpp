@@ -107,6 +107,16 @@ int o3xnnl_open(void ** out, void * mida_device) {
         return -4;
     }
     s->handle = h;
+
+    {
+        const char * lvl = getenv("O3NPU_XNNL_LOG");
+        void (*set_level)(int) = (void (*)(int)) dlsym(s->lib, "_ZN10XNNLLogger13set_log_levelE12XNNLLogLevel");
+        if (lvl && *lvl && set_level) {
+            set_level(atoi(lvl));
+            fprintf(stderr, "xnnl_shim: log level -> %d\n", atoi(lvl));
+        }
+    }
+
     *out = s;
     return 0;
 }
