@@ -97,6 +97,7 @@ struct mida_api {
     int  (*sub_exec_stack_info)(midaSubgraphExec_t, midaSubgraphStackInfo *);
     int  (*sub_print_info)(midaSubgraph_t);
     int  (*sub_exec_print_info)(midaSubgraphExec_t);
+    int  (*sub_exec_dump)(midaSubgraphExec_t, const char *);
 
     int  (*stream_create)(midaStream_t *, midaDevice_t, midaStreamConfig *);
     int  (*stream_destroy)(midaStream_t);
@@ -160,6 +161,7 @@ static struct mida_api * mida_get(void) {
     a->sub_exec_stack_info = (int (*)(midaSubgraphExec_t, midaSubgraphStackInfo *)) dlsym(a->lib, "midaSubgraphExecGetStackInfo");
     a->sub_print_info = (int (*)(midaSubgraph_t)) dlsym(a->lib, "midaSubgraphPrintInfo");
     a->sub_exec_print_info = (int (*)(midaSubgraphExec_t)) dlsym(a->lib, "midaSubgraphExecPrintInfo");
+    a->sub_exec_dump = (int (*)(midaSubgraphExec_t, const char *)) dlsym(a->lib, "midaSubgraphExecDumpDataToFile");
 
     a->stream_create = (int (*)(midaStream_t *, midaDevice_t, midaStreamConfig *)) need_sym(a->lib, "midaStreamCreate");
     a->stream_destroy= (int (*)(midaStream_t)) need_sym(a->lib, "midaStreamDestroy");
@@ -613,6 +615,12 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     }
     if (m->trace && a->sub_exec_print_info) {
         printf("o3npu: midaSubgraphExecPrintInfo -> %d\n", a->sub_exec_print_info(exec));
+    }
+    if (a->sub_exec_dump) {
+        const char * dump = getenv("O3NPU_DUMP");
+        if (dump && *dump) {
+            printf("o3npu: dump %s -> %d\n", dump, a->sub_exec_dump(exec, dump));
+        }
     }
 
     midaLaunchConfig lc;
