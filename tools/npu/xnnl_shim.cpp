@@ -6,6 +6,9 @@
  * keep tools/npu/o3npu.c free of C++.
  */
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <stdint.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -46,6 +49,48 @@ struct o3xnnl {
                   const void *, const void *, xnnlTensorDescriptor_t, void *,
                   xnnlEpilogueDescriptor_t, bool, uint32_t);
 };
+
+/* Patch xnnlMatmulCreateGraph policyMode_ compare so 0 takes the
+ * createGraphSpecializedN branch instead of createGraphSplitMN.
+ * offset 0x8a4 from function entry; cmp w8,#1 -> cmp w8,#0 */
+static void o3xnnl_force_specn(void * matmul_fn) {
+    if (!getenv("O3NPU_FORCE_SPECN")) return;
+    unsigned char * p = (unsigned char *) matmul_fn + 0x8a4;
+    uint32_t insn = 0;
+    memcpy(&insn, p, 4);
+    fprintf(stderr, "xnnl_shim: policy insn @ %p = 0x%08x\n", p, insn);
+    if (insn != 0x7100051Fu) {
+        fprintf(stderr, "xnnl_shim: unexpected insn, not patching\n");
+        return;
+    }
+    long page = sysconf(_SC_PAGESIZE);
+    uintptr_t pg = (uintptr_t) p & ~((uintptr_t) page - 1);
+    if (mprotect((void *) pg, (size_t) page, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        perror("xnnl_shim: mprotect");
+        return;
+    }
+    uint32_t patched = 0x7100011Fu;   /* cmp w8, #0 */
+    memcpy(p, &patched, 4);
+    __builtin___clear_cache((char *) p, (char *) p + 4);
+    fprintf(stderr, "xnnl_shim: patched policyMode_ compare -> specializedN\n");
+}
+
+/* Rename the L1B matmul kernel string to its non-L1B sibling. */
+static void o3xnnl_force_nol1b(void * matmul_fn) {
+    if (!getenv("O3NPU_FORCE_NOL1B")) return;
+    uintptr_t bias = (uintptr_t) matmul_fn - 0x5d386c;
+    unsigned char * str = (unsigned char *) (bias + 0x330a6);
+    fprintf(stderr, "xnnl_shim: kernel str @ %p = %.40s\n", str, str);
+    long page = sysconf(_SC_PAGESIZE);
+    uintptr_t pg = (uintptr_t) str & ~((uintptr_t) page - 1);
+    if (mprotect((void *) pg, (size_t) page, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        perror("xnnl_shim: mprotect str");
+        return;
+    }
+    str[25] = 0;   /* "MatmulOpPerChnSplitKernelL1B" -> "...SplitKernel" */
+    __builtin___clear_cache((char *) str, (char *) str + 32);
+    fprintf(stderr, "xnnl_shim: kernel str now = %.40s\n", str);
+}
 
 static int sym(void * lib, const char * name, void ** out) {
     *out = dlsym(lib, name);
@@ -178,6 +223,9 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
     if ((rc = make_desc(s, &di, in_dims, "in")) != 0) return rc;
     if ((rc = make_desc(s, &dw, w_dims, "w")) != 0) return rc;
     if ((rc = make_desc(s, &dout, out_dims, "out")) != 0) return rc;
+
+    o3xnnl_force_specn((void *) s->matmul);
+    o3xnnl_force_nol1b((void *) s->matmul);
 
     if (wscale && s->set_quant) {
         int qr = s->set_quant(dw, true, false, wscale, nullptr, 0, 0);
