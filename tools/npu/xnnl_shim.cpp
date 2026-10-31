@@ -237,7 +237,15 @@ extern "C" int o3xnnl_unary(void * handle, void * subgraph, const char * name,
     xnnlTensorDescriptor_t xd = nullptr, yd = nullptr;
     if (make_desc(s, &xd, dims, "uin") != 0) return -3;
     if (make_desc(s, &yd, dims, "uout") != 0) return -3;
-    int rc = fn(s->handle, subgraph, 0, xd, x, yd, y);
+    int l2b = 1024 * 1024;
+    const char * e = getenv("O3NPU_L2B");
+    if (e && *e) l2b = atoi(e);
+    int rc;
+    if (getenv("O3NPU_UNARY_SWAP")) {
+        rc = fn(s->handle, subgraph, l2b, yd, y, xd, (void *) x);
+    } else {
+        rc = fn(s->handle, subgraph, l2b, xd, x, yd, y);
+    }
     s->destroy_desc(xd);
     s->destroy_desc(yd);
     return rc;

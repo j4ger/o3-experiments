@@ -1158,3 +1158,24 @@ sign     : PASS (rc=0)
 ```
 
 （设备当前未连接，这张表等下次上机生成。）
+
+---
+
+## 24. unary 算子第三参数（2026-10-31 11:53）
+
+`xnnlAbsCreateGraph` / `xnnlNegCreateGraph` / `xnnlSignCreateGraph` 的签名是：
+
+```c
+xnnlStatus_t xnnlAbsCreateGraph(const xnnlHandle_t handle, midaSubgraph_t subgraph,
+                                uint32_t l2bMaxSize,
+                                const xnnlTensorDescriptor_t inDesc, const void *inPtr,
+                                const xnnlTensorDescriptor_t outDesc, void *outPtr);
+```
+
+第三参数是 **l2bMaxSize**（不是 mode）。依据：反汇编里 `xnnlUnaryImpl` 对象
+`+0x10` 直接存 `param_3`，而 `paramCheck` 读 `[this+0x10]` 做
+`(l2bMaxSize_ > 8MB) || (l2bMaxSize_ < 128KB)` 检查。
+
+传 1 MB 后 abs/neg/sign 的 create/instantiate/launch/sync 全部返回 0，
+但输出仍未被写回（544/576 是初始值）。说明 unary 的 kernel node 仍未真正执行，
+与 matmul 同属"图空转"一类问题。

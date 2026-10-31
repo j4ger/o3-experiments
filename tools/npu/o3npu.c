@@ -958,7 +958,10 @@ int o3npu_unary_test(const char * name, int n, int trace) {
         pi[i] = 0x3C00;  /* 1.0 */
     }
     a->mem_cache_end(in.mem);
-    memset(out.cpu, 0, (size_t) n * 2);
+    {
+        uint16_t * po = (uint16_t *) out.cpu;
+        for (int i = 0; i < n; i++) po[i] = 0x3800;  /* 0.5 */
+    }
     a->mem_cache_end(out.mem);
 
     midaSubgraphConfig subcfg;
@@ -1007,7 +1010,20 @@ int o3npu_unary_test(const char * name, int n, int trace) {
             bad++;
         }
     }
-    printf("unary %s check: %d/%d mismatch\n", name, bad, n);
+    if (trace && bad) {
+        for (int c = 0; c < n; c += 64) {
+            int cb = 0;
+            int ce = c + 64 < n ? c + 64 : n;
+            for (int i = c; i < ce; i++) {
+                float v = o3npu_fp16_to_fp32(po[i]);
+                if (fabsf(v - expect) > 1e-3f) cb++;
+            }
+            printf("unary %s chunk %d-%d: %d bad\n", name, c, ce - 1, cb);
+        }
+    }
+    printf("unary %s check: %d/%d mismatch (in[0]=%f out[0]=%f)\n", name, bad, n,
+           o3npu_fp16_to_fp32(((const uint16_t *) in.cpu)[0]),
+           o3npu_fp16_to_fp32(po[0]));
     return bad == 0 ? 0 : 1;
 }
 
