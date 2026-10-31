@@ -259,7 +259,8 @@ static int dbuf_reserve_flag(struct mida_api * a, midaDevice_t dev, struct dbuf 
     }
     dbuf_free(a, d);
 
-    int rc = a->mem_alloc(&d->mem, dev, want, (uint32_t) mflag, 0, name);
+    uint32_t align = (uint32_t) env_int("O3NPU_ALIGN", 0);
+    int rc = a->mem_alloc(&d->mem, dev, want, (uint32_t) mflag, align, name);
     if (rc != 0 || !d->mem) {
         fprintf(stderr, "o3npu: midaMemoryAlloc(%s,%llu) -> %s\n", name,
                 (unsigned long long) want, err_str(a, rc));
