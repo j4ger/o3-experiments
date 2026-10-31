@@ -151,8 +151,7 @@ int main(int argc, char ** argv) {
         } else if (a == "--modules") {
             return o3npu_modules();
         } else if (a == "--funcs") {
-            printf("--funcs disabled (midaModuleGetFunction signature unresolved)
-");
+            printf("--funcs disabled (signature unresolved)\n");
             return 1;
         } else if (a == "--op" && i + 1 < argc) {
             const char * op = argv[++i];
