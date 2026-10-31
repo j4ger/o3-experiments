@@ -21,6 +21,7 @@
 
 extern "C" int o3npu_rmsnorm_test(int K, int trace);
 extern "C" int o3npu_limits(void);
+extern "C" int o3npu_unary_test(const char * name, int n, int trace);
 
 #include <cmath>
 #include <cstdint>
@@ -132,6 +133,7 @@ int main(int argc, char ** argv) {
     int K = 576, M = 576, T = 1;
     bool sweep = false;
     bool rms = false;
+    bool ops_all = false;
     int  transposed = -1;
 
     for (int i = 1; i < argc; i++) {
@@ -140,8 +142,15 @@ int main(int argc, char ** argv) {
             sweep = true;
         } else if (a == "--rms") {
             rms = true;
+        } else if (a == "--ops") {
+            ops_all = true;
         } else if (a == "--limits") {
             return o3npu_limits();
+        } else if (a == "--op" && i + 1 < argc) {
+            const char * op = argv[++i];
+            int rc = o3npu_unary_test(op, K, 1);
+            printf("RESULT %s (rc=%d)\n", rc == 0 ? "ok" : "failed", rc);
+            return rc == 0 ? 0 : 5;
 
         } else if (a == "--transposed" && i + 1 < argc) {
             transposed = atoi(argv[++i]);
@@ -155,6 +164,27 @@ int main(int argc, char ** argv) {
             printf("usage: %s [K M T] [--sweep] [--transposed 0|1]\n", argv[0]);
             return 0;
         }
+    }
+
+    if (ops_all) {
+        int fails = 0;
+        struct { const char * name; int rc; } res[8];
+        int n = 0;
+        res[n].name = "rmsnorm"; res[n].rc = o3npu_rmsnorm_test(K, 1); n++;
+        const char * unary[] = { "abs", "neg", "sign" };
+        for (int i = 0; i < 3; i++) {
+            res[n].name = unary[i];
+            res[n].rc = o3npu_unary_test(unary[i], K, 1);
+            n++;
+        }
+        printf("\n==== operator summary ====\n");
+        for (int i = 0; i < n; i++) {
+            printf("%-8s : %s (rc=%d)\n", res[i].name,
+                   res[i].rc == 0 ? "PASS" : "FAIL", res[i].rc);
+            if (res[i].rc != 0) fails++;
+        }
+        printf("=========================\n");
+        return fails == 0 ? 0 : 6;
     }
 
     if (rms) {

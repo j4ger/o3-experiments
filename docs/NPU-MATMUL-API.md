@@ -1120,3 +1120,41 @@ policyMode_=...
 
 拿到 `kernel name` 和 `M/K/N` 后，就能直接判断是 specializedN 还是 splitMN 分支、
 以及 kernel 期望的布局。这一步不需要再改代码。
+
+---
+
+## 23. 算子探针（2026-10-31）
+
+`probe_npu_matmul` 现在支持一次跑一组算子并打印 PASS/FAIL 表：
+
+```bash
+O3NPU_MEM_FLAG=5 ./probe_npu_matmul --ops --k 576
+```
+
+当前覆盖：
+
+| 算子 | API | 说明 |
+|---|---|---|
+| RMSNorm | `xnnlRMSNormalizationCreateGraph` | 已验证能执行（sync=0），本轮加入数值校验 |
+| Abs | `xnnlAbsCreateGraph` | 签名从反汇编恢复：`(handle, subgraph, int mode, inDesc, inPtr, outDesc, outPtr)` |
+| Neg | `xnnlNegCreateGraph` | 同上 |
+| Sign | `xnnlSignCreateGraph` | 同上 |
+
+校验方法：输入全部 1.0（fp16 `0x3C00`），输出应为
+Abs→1.0、Neg→-1.0、Sign→1.0；读回 fp16 逐元素比对，打印 mismatch 计数。
+
+`xnnlAbsCreateGraph` 的反汇编还揭示了一个通用模式：很多一元算子在
+`midaSubgraph_t` 之后还有一个 **`int` 参数**（模式/轴），不是纯 descriptor 列表。
+
+`--ops` 会在最后输出：
+
+```
+==== operator summary ====
+rmsnorm  : PASS (rc=0)
+abs      : PASS (rc=0)
+neg      : PASS (rc=0)
+sign     : PASS (rc=0)
+=========================
+```
+
+（设备当前未连接，这张表等下次上机生成。）

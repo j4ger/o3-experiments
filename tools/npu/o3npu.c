@@ -14,10 +14,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 /* xnnl_shim.cpp */
 extern int  o3xnnl_open(void ** out, void * mida_device);
 extern void o3xnnl_close(void * handle);
+extern int  o3xnnl_unary(void * handle, void * subgraph, const char * name,
+                         int n, const void * x, void * y);
 extern int  o3xnnl_rmsnorm(void * handle, void * subgraph, int K,
                            const void * x, const void * w, void * y);
 extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
@@ -31,6 +34,7 @@ extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
 /* ------------------------------------------------------------------ */
 
 static int env_int(const char * name, int def);
+float o3npu_fp16_to_fp32(uint16_t h);
 static void fill_devcfg(midaDeviceConfig * c);
 
 /* ------------------------------------------------------------------ */
@@ -880,6 +884,90 @@ int o3npu_limits(void) {
                (unsigned long long) v, (unsigned long long) v);
     }
     return 0;
+}
+
+
+int o3npu_unary_test(const char * name, int n, int trace) {
+    struct mida_api * a = mida_get();
+    if (!a) return -1;
+
+    midaDeviceConfig cfg;
+    fill_devcfg(&cfg);
+    midaDevice_t dev = NULL;
+    int rc = a->device_get(&dev, 0, &cfg);
+    if (rc != 0 || !dev) { printf("unary device -> %d\n", rc); return -2; }
+
+    midaStreamConfig sc;
+    memset(&sc, 0, sizeof sc);
+    sc.type = 1;
+    midaStream_t st = NULL;
+    rc = a->stream_create(&st, dev, &sc);
+    if (rc != 0) { printf("unary stream -> %d\n", rc); return -3; }
+
+    void * xh = NULL;
+    if (o3xnnl_open(&xh, dev) != 0) return -4;
+
+    struct dbuf in, out;
+    memset(&in, 0, sizeof in);   in.fd = -1;
+    memset(&out, 0, sizeof out); out.fd = -1;
+    if (dbuf_reserve(a, dev, &in,  (uint64_t) n * 2, "uin")  != 0) return -5;
+    if (dbuf_reserve(a, dev, &out, (uint64_t) n * 2, "uout") != 0) return -5;
+
+    uint16_t * pi = (uint16_t *) in.cpu;
+    for (int i = 0; i < n; i++) {
+        pi[i] = 0x3C00;  /* 1.0 */
+    }
+    a->mem_cache_end(in.mem);
+    memset(out.cpu, 0, (size_t) n * 2);
+    a->mem_cache_end(out.mem);
+
+    midaSubgraphConfig subcfg;
+    memset(&subcfg, 0, sizeof subcfg);
+    midaSubgraph_t sub = NULL;
+    rc = a->sub_create(&sub, dev, &subcfg);
+    if (rc != 0) { printf("unary subgraph -> %d\n", rc); return -6; }
+
+    rc = o3xnnl_unary(xh, sub, name, n, (const void *) in.va, (void *) out.va);
+    printf("unary %s create -> %d\n", name, rc);
+    if (rc != 0) return -7;
+
+    midaSubgraphExecParams ep;
+    memset(&ep, 0, sizeof ep);
+    midaSubgraphExec_t ex = NULL;
+    rc = a->sub_instantiate(&ex, sub, &ep);
+    printf("unary %s instantiate -> %d\n", name, rc);
+    if (rc != 0) return -8;
+
+    midaLaunchConfig lc;
+    memset(&lc, 0, sizeof lc);
+    lc.cu_num = 1;
+    lc.ddr_ratio = 1.0f;
+    lc.fw_timeout = 10000;
+    lc.name = "o3un";
+    rc = a->stream_launch_subgraph_async(ex, &lc, st);
+    printf("unary %s launch -> %d\n", name, rc);
+    if (rc != 0) return -9;
+
+    rc = a->stream_sync(st);
+    printf("unary %s sync -> %d (%s)\n", name, rc, err_str(a, rc));
+    if (rc != 0) return -10;
+
+    /* read back and compare against the expected value */
+    a->mem_cache_end(out.mem);
+    const uint16_t * po = (const uint16_t *) out.cpu;
+    float expect = (strcmp(name, "neg") == 0) ? -1.0f : 1.0f;
+    int bad = 0;
+    for (int i = 0; i < n; i++) {
+        float v = o3npu_fp16_to_fp32(po[i]);
+        if (fabsf(v - expect) > 1e-3f) {
+            if (bad < 4 && trace) {
+                printf("unary %s: out[%d]=%f expect %f\n", name, i, v, expect);
+            }
+            bad++;
+        }
+    }
+    printf("unary %s check: %d/%d mismatch\n", name, bad, n);
+    return bad == 0 ? 0 : 1;
 }
 
 /* exposed for the host unit test only */

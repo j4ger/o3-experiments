@@ -35,6 +35,9 @@ struct o3xnnl {
     int (*create_epl)(xnnlEpilogueDescriptor_t *);
     int (*destroy_epl)(xnnlEpilogueDescriptor_t);
     int (*set_epl)(xnnlEpilogueDescriptor_t, int, int, int, int, int, int, int, int, int, int);
+    int (*abs)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *);
+    int (*neg)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *);
+    int (*sign)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *);
     int (*rmsnorm)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *,
                    xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *, int, float, int);
     int (*matmul)(xnnlHandle_t, void *, xnnlTensorDescriptor_t, const void *,
@@ -85,6 +88,9 @@ int o3xnnl_open(void ** out, void * mida_device) {
     }
 
     sym(s->lib, "xnnlRMSNormalizationCreateGraph", (void **) &s->rmsnorm);
+    sym(s->lib, "xnnlAbsCreateGraph", (void **) &s->abs);
+    sym(s->lib, "xnnlNegCreateGraph", (void **) &s->neg);
+    sym(s->lib, "xnnlSignCreateGraph", (void **) &s->sign);
     if (sym(s->lib, "xnnlCreate", (void **) &s->create) ||
         sym(s->lib, "xnnlDestroy", (void **) &s->destroy) ||
         sym(s->lib, "xnnlCreateTensorDescriptor", (void **) &s->create_desc) ||
@@ -202,5 +208,29 @@ extern "C" int o3xnnl_rmsnorm(void * handle, void * subgraph, int K,
     if (make_desc(s, &yd, dims, "rout")!= 0) return -2;
     int rc = s->rmsnorm(s->handle, subgraph, 0, xd, x, wd, w, yd, y, 0, 1e-6f, 0);
     s->destroy_desc(xd); s->destroy_desc(wd); s->destroy_desc(yd);
+    return rc;
+}
+
+extern "C" int o3xnnl_unary(void * handle, void * subgraph, const char * name,
+                            int n, const void * x, void * y) {
+    struct o3xnnl * s = (struct o3xnnl *) handle;
+    if (!s || !subgraph || !name) {
+        return -1;
+    }
+    int (*fn)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *,
+              xnnlTensorDescriptor_t, void *) = nullptr;
+    if (strcmp(name, "abs") == 0)  fn = s->abs;
+    if (strcmp(name, "neg") == 0)  fn = s->neg;
+    if (strcmp(name, "sign") == 0) fn = s->sign;
+    if (!fn) {
+        return -2;
+    }
+    int dims[4] = { 1, 1, 1, n };
+    xnnlTensorDescriptor_t xd = nullptr, yd = nullptr;
+    if (make_desc(s, &xd, dims, "uin") != 0) return -3;
+    if (make_desc(s, &yd, dims, "uout") != 0) return -3;
+    int rc = fn(s->handle, subgraph, 0, xd, x, yd, y);
+    s->destroy_desc(xd);
+    s->destroy_desc(yd);
     return rc;
 }
