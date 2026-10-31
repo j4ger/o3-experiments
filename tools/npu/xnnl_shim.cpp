@@ -241,7 +241,9 @@ extern "C" int o3xnnl_unary(void * handle, void * subgraph, const char * name,
     const char * e = getenv("O3NPU_L2B");
     if (e && *e) l2b = atoi(e);
     int rc;
-    if (getenv("O3NPU_UNARY_SWAP")) {
+    if (getenv("O3NPU_UNARY_INPLACE")) {
+        rc = fn(s->handle, subgraph, l2b, xd, x, xd, (void *) x);
+    } else if (getenv("O3NPU_UNARY_SWAP")) {
         rc = fn(s->handle, subgraph, l2b, yd, y, xd, (void *) x);
     } else {
         rc = fn(s->handle, subgraph, l2b, xd, x, yd, y);

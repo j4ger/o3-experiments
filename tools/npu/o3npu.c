@@ -999,6 +999,10 @@ int o3npu_unary_test(const char * name, int n, int trace) {
     /* read back and compare against the expected value */
     a->mem_cache_end(out.mem);
     const uint16_t * po = (const uint16_t *) out.cpu;
+    if (getenv("O3NPU_UNARY_INPLACE")) {
+        a->mem_cache_end(in.mem);
+        po = (const uint16_t *) in.cpu;
+    }
     float expect = (strcmp(name, "neg") == 0) ? -1.0f : 1.0f;
     int bad = 0;
     for (int i = 0; i < n; i++) {

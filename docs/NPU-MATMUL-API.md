@@ -1135,8 +1135,8 @@ O3NPU_MEM_FLAG=5 ./probe_npu_matmul --ops --k 576
 
 | 算子 | API | 说明 |
 |---|---|---|
-| RMSNorm | `xnnlRMSNormalizationCreateGraph` | 已验证能执行（sync=0），本轮加入数值校验 |
-| Abs | `xnnlAbsCreateGraph` | 签名从反汇编恢复：`(handle, subgraph, int mode, inDesc, inPtr, outDesc, outPtr)` |
+| RMSNorm | `xnnlRMSNormalizationCreateGraph` | **PASS**：sync=0 且数值校验 0/576 mismatch |
+| Abs | `xnnlAbsCreateGraph` | create/launch/sync 通过（第三参数是 l2bMaxSize，见 §24），但输出未写回 |
 | Neg | `xnnlNegCreateGraph` | 同上 |
 | Sign | `xnnlSignCreateGraph` | 同上 |
 
