@@ -162,6 +162,16 @@ int o3xnnl_open(void ** out, void * mida_device) {
     s->handle = h;
 
     {
+        const char * dv = getenv("O3NPU_DEV_VER");
+        int (*setver)(xnnlHandle_t, uint32_t) =
+            (int (*)(xnnlHandle_t, uint32_t)) dlsym(s->lib, "xnnlSetDeviceVersion");
+        if (dv && *dv && setver) {
+            int r = setver(h, (uint32_t) strtoul(dv, nullptr, 0));
+            fprintf(stderr, "xnnl_shim: set_device_version(%s) -> %d\n", dv, r);
+        }
+    }
+
+    {
         const char * hb = getenv("O3NPU_HANDLE_L2B");
         if (hb && *hb) {
             *(uint32_t *) ((char *) h + 0x10) = (uint32_t) strtoul(hb, nullptr, 0);
