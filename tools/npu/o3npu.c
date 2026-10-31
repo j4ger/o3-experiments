@@ -83,6 +83,8 @@ struct mida_api {
     int  (*device_get_limit)(uint32_t *, int, midaDevice_t);
     int  (*device_set_limit)(int, uint32_t, midaDevice_t);
     int  (*sub_set_dma_split)(midaSubgraph_t, uint32_t);
+    int  (*module_load)(void **, midaDevice_t, const void *, uint32_t);
+    int  (*module_get_func)(void *, const char *, void **);
 
     int  (*mem_alloc)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *);
     int  (*mem_free)(midaMemory_t);
@@ -157,6 +159,8 @@ static struct mida_api * mida_get(void) {
     a->device_get_limit = (int (*)(uint32_t *, int, midaDevice_t)) dlsym(a->lib, "midaDeviceGetLimit");
     a->device_set_limit = (int (*)(int, uint32_t, midaDevice_t)) dlsym(a->lib, "midaDeviceSetLimit");
     a->sub_set_dma_split = (int (*)(midaSubgraph_t, uint32_t)) dlsym(a->lib, "midaSubgraphSetDMASplitMode");
+    a->module_load = (int (*)(void **, midaDevice_t, const void *, uint32_t)) dlsym(a->lib, "midaModuleLoadData");
+    a->module_get_func = (int (*)(void *, const char *, void **)) dlsym(a->lib, "midaModuleGetFunction");
 
     a->mem_alloc     = (int (*)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *)) need_sym(a->lib, "midaMemoryAlloc");
     a->mem_free      = (int (*)(midaMemory_t)) need_sym(a->lib, "midaMemoryFree");
@@ -244,8 +248,8 @@ static void dbuf_free(struct mida_api * a, struct dbuf * d) {
     d->fd = -1;
 }
 
-static int dbuf_reserve(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
-                        uint64_t want, const char * name) {
+static int dbuf_reserve_flag(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
+                             uint64_t want, const char * name, int mflag) {
     if (want == 0) {
         want = 4096;
     }
@@ -255,7 +259,6 @@ static int dbuf_reserve(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
     }
     dbuf_free(a, d);
 
-    int mflag = env_int("O3NPU_MEM_FLAG", 5);
     int rc = a->mem_alloc(&d->mem, dev, want, (uint32_t) mflag, 0, name);
     if (rc != 0 || !d->mem) {
         fprintf(stderr, "o3npu: midaMemoryAlloc(%s,%llu) -> %s\n", name,
@@ -294,6 +297,13 @@ static int dbuf_reserve(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
         return -1;
     }
     return 0;
+}
+
+static int dbuf_reserve(struct mida_api * a, midaDevice_t dev, struct dbuf * d,
+                        uint64_t want, const char * name) {
+    int mflag = env_int("O3NPU_MEM_FLAG", 5);
+    if (strcmp(name, "o3w") == 0) mflag = env_int("O3NPU_WFLAG", mflag);
+    return dbuf_reserve_flag(a, dev, d, want, name, mflag);
 }
 
 static void dbuf_sync_cpu(struct mida_api * a, struct dbuf * d) {
@@ -561,7 +571,8 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     m->err[0] = 0;
 
     if (dbuf_reserve(a, m->dev, &m->in, (uint64_t) K * T * 2, "o3in") != 0 ||
-        dbuf_reserve(a, m->dev, &m->w, (uint64_t) K * M * 2, "o3w") != 0 ||
+        dbuf_reserve_flag(a, m->dev, &m->w, (uint64_t) K * M * 2, "o3w",
+                          env_int("O3NPU_WFLAG", env_int("O3NPU_MEM_FLAG", 5))) != 0 ||
         dbuf_reserve(a, m->dev, &m->out, (uint64_t) M * T * 2, "o3out") != 0) {
         snprintf(m->err, sizeof m->err, "buffer allocation failed");
         return -2;
@@ -607,7 +618,7 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         if (m->trace) printf("o3npu: SetDMASplitMode(%d) -> %d\n", env_int("O3NPU_DMASPLIT", 0), dr);
     }
 
-    const int in_dims[4]  = { 1, 1, 1, K };
+    const int in_dims[4]  = { 1, 1, env_int("O3NPU_IN_M", 1), K };
     int       w_dims[4]   = { 1, 1, K, M };
     const int out_dims[4] = { T, 1, 1, M };
     if (m->transposed_w && env_int("O3NPU_WDIMS_MK", 1)) {
@@ -1052,6 +1063,86 @@ int o3npu_unary_test(const char * name, int n, int trace) {
            o3npu_fp16_to_fp32(((const uint16_t *) in.cpu)[0]),
            o3npu_fp16_to_fp32(po[0]));
     return bad == 0 ? 0 : 1;
+}
+
+
+int o3npu_modules(void) {
+    struct mida_api * a = mida_get();
+    if (!a || !a->module_load) { printf("no module_load\n"); return -1; }
+
+    void * xl = dlopen("/vendor/lib64/libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) xl = dlopen("libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) { printf("dlopen libxnnl failed\n"); return -1; }
+
+    int (*cnt)(int *) = (int (*)(int *)) dlsym(xl, "xnnlGetDiscreteElfCount");
+    int (*nm)(unsigned int, char **) = (int (*)(unsigned int, char **)) dlsym(xl, "xnnlGetDiscreteElfName");
+    int (*dat)(unsigned int, void **) = (int (*)(unsigned int, void **)) dlsym(xl, "xnnlGetDiscreteElfData");
+    int (*sz)(unsigned int, size_t *) = (int (*)(unsigned int, size_t *)) dlsym(xl, "xnnlGetDiscreteElfSize");
+    if (!cnt || !nm || !dat || !sz) { printf("missing xnnl getters\n"); return -1; }
+
+    midaDeviceConfig cfg;
+    fill_devcfg(&cfg);
+    midaDevice_t dev = NULL;
+    int rc = a->device_get(&dev, 0, &cfg);
+    if (rc != 0 || !dev) { printf("device -> %d\n", rc); return -2; }
+
+    int n = 0;
+    cnt(&n);
+    printf("modules: %d\n", n);
+    for (int i = 0; i < n; i++) {
+        char * name = NULL;
+        void * data = NULL;
+        size_t size = 0;
+        nm((unsigned) i, &name);
+        dat((unsigned) i, &data);
+        sz((unsigned) i, &size);
+        void * mod = NULL;
+        int r = a->module_load(&mod, dev, data, (uint32_t) size);
+        printf("module[%02d] load=%d mod=%p size=%zu name=%s\n", i, r, mod, size, name ? name : "?");
+    }
+    return 0;
+}
+
+
+int o3npu_funcs(void) {
+    struct mida_api * a = mida_get();
+    if (!a || !a->module_load || !a->module_get_func) { printf("no module funcs\n"); return -1; }
+    void * xl = dlopen("/vendor/lib64/libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) xl = dlopen("libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    int (*nm)(unsigned int, char **) = (int (*)(unsigned int, char **)) dlsym(xl, "xnnlGetDiscreteElfName");
+    int (*dat)(unsigned int, void **) = (int (*)(unsigned int, void **)) dlsym(xl, "xnnlGetDiscreteElfData");
+    int (*sz)(unsigned int, size_t *) = (int (*)(unsigned int, size_t *)) dlsym(xl, "xnnlGetDiscreteElfSize");
+    if (!nm || !dat || !sz) { printf("missing getters\n"); return -1; }
+
+    midaDeviceConfig cfg;
+    fill_devcfg(&cfg);
+    midaDevice_t dev = NULL;
+    int rc = a->device_get(&dev, 0, &cfg);
+    if (rc != 0 || !dev) { printf("device -> %d\n", rc); return -2; }
+
+    struct { int idx; const char ** names; int n; } jobs[2];
+    const char * mm[] = { "MatmulOpPerChnSplitKernelL1B", "MatmulOpPerChnSplitKernel",
+                          "MatmulOpKernelSpecializedN" };
+    const char * rms[] = { "RMSNormalizationHalf_BlockReduce_TMA_L2B",
+                           "RMSNormalizationHalf_BlockReduce_TMA" };
+    jobs[0].idx = 39; jobs[0].names = mm;  jobs[0].n = 3;
+    jobs[1].idx = 44; jobs[1].names = rms; jobs[1].n = 2;
+
+    for (int j = 0; j < 2; j++) {
+        char * mname = NULL; void * data = NULL; size_t size = 0;
+        nm((unsigned) jobs[j].idx, &mname);
+        dat((unsigned) jobs[j].idx, &data);
+        sz((unsigned) jobs[j].idx, &size);
+        void * mod = NULL;
+        int lr = a->module_load(&mod, dev, data, (uint32_t) size);
+        printf("module[%d] %s load=%d mod=%p\n", jobs[j].idx, mname ? mname : "?", lr, mod);
+        for (int i = 0; i < jobs[j].n; i++) {
+            void * fn = NULL;
+            int fr = a->module_get_func(mod, jobs[j].names[i], &fn);
+            printf("  func %-45s -> %d fn=%p\n", jobs[j].names[i], fr, fn);
+        }
+    }
+    return 0;
 }
 
 /* exposed for the host unit test only */

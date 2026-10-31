@@ -21,6 +21,8 @@
 
 extern "C" int o3npu_rmsnorm_test(int K, int trace);
 extern "C" int o3npu_limits(void);
+extern "C" int o3npu_modules(void);
+extern "C" int o3npu_funcs(void);
 extern "C" int o3npu_unary_test(const char * name, int n, int trace);
 
 #include <cmath>
@@ -146,6 +148,12 @@ int main(int argc, char ** argv) {
             ops_all = true;
         } else if (a == "--limits") {
             return o3npu_limits();
+        } else if (a == "--modules") {
+            return o3npu_modules();
+        } else if (a == "--funcs") {
+            printf("--funcs disabled (midaModuleGetFunction signature unresolved)
+");
+            return 1;
         } else if (a == "--op" && i + 1 < argc) {
             const char * op = argv[++i];
             int rc = o3npu_unary_test(op, K, 1);
