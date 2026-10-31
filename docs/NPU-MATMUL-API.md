@@ -1179,3 +1179,25 @@ xnnlStatus_t xnnlAbsCreateGraph(const xnnlHandle_t handle, midaSubgraph_t subgra
 传 1 MB 后 abs/neg/sign 的 create/instantiate/launch/sync 全部返回 0，
 但输出仍未被写回（544/576 是初始值）。说明 unary 的 kernel node 仍未真正执行，
 与 matmul 同属"图空转"一类问题。
+
+---
+
+## 25. matmul 的 L2B 线索（2026-10-31 12:22）
+
+打开 `O3NPU_XNNL_LOG=0` 后确认 matmul 走的是 `matmul_splitMN.cpp`，
+所有 TMA 描述符中**只有 weight 的 `locMemType` 是 1（L2B）**：
+
+```
+in  : glbMemType:0 locMemType:0
+w   : glbMemType:0 locMemType:1   ← L2B
+out : glbMemType:0 locMemType:0
+```
+
+RMSNorm（能跑）三条全部 `locMemType:0`。
+
+matmul 的日志里没有任何 `addAllocNode`/`AddL2b*` 记录，怀疑 splitMN 的图
+没有给 weight 分配 L2B 区域，固件写 L2B 时地址无效 → `fail status 3 2`。
+
+试过 `O3NPU_L2B`/`O3NPU_VA`/`O3NPU_REGNUM`/`midaSubgraphSetDMASplitMode`
+均无效。下一步是反编译 `createGraphSplitMN`，看它是否应当调用
+`SubgraphImpl::AddL2bAllocNode`。

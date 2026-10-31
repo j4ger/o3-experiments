@@ -82,6 +82,7 @@ struct mida_api {
     int  (*device_reset)(midaDevice_t);
     int  (*device_get_limit)(uint32_t *, int, midaDevice_t);
     int  (*device_set_limit)(int, uint32_t);
+    int  (*sub_set_dma_split)(midaSubgraph_t, uint32_t);
 
     int  (*mem_alloc)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *);
     int  (*mem_free)(midaMemory_t);
@@ -155,6 +156,7 @@ static struct mida_api * mida_get(void) {
     a->device_reset  = (int (*)(midaDevice_t)) need_sym(a->lib, "midaDeviceReset");
     a->device_get_limit = (int (*)(uint32_t *, int, midaDevice_t)) dlsym(a->lib, "midaDeviceGetLimit");
     a->device_set_limit = (int (*)(int, uint32_t)) dlsym(a->lib, "midaDeviceSetLimit");
+    a->sub_set_dma_split = (int (*)(midaSubgraph_t, uint32_t)) dlsym(a->lib, "midaSubgraphSetDMASplitMode");
 
     a->mem_alloc     = (int (*)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *)) need_sym(a->lib, "midaMemoryAlloc");
     a->mem_free      = (int (*)(midaMemory_t)) need_sym(a->lib, "midaMemoryFree");
@@ -597,6 +599,11 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         return -3;
     }
 
+    if (a->sub_set_dma_split && env_int("O3NPU_DMASPLIT", -1) >= 0) {
+        int dr = a->sub_set_dma_split(sub, (uint32_t) env_int("O3NPU_DMASPLIT", 0));
+        if (m->trace) printf("o3npu: SetDMASplitMode(%d) -> %d\n", env_int("O3NPU_DMASPLIT", 0), dr);
+    }
+
     const int in_dims[4]  = { 1, 1, 1, K };
     int       w_dims[4]   = { 1, 1, K, M };
     const int out_dims[4] = { T, 1, 1, M };
@@ -705,6 +712,7 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     memset(&ep, 0, sizeof ep);
     ep.l2bSize = (uint32_t) env_int("O3NPU_L2B", 0);
     ep.vaSize  = (uint32_t) env_int("O3NPU_VA", 0);
+    ep.regNum  = (uint32_t) env_int("O3NPU_REGNUM", 0);
 
     {
         uint64_t stack_sz = (uint64_t) env_int("O3NPU_STACK", 0);
