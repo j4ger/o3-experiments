@@ -1201,3 +1201,14 @@ matmul 的日志里没有任何 `addAllocNode`/`AddL2b*` 记录，怀疑 splitMN
 试过 `O3NPU_L2B`/`O3NPU_VA`/`O3NPU_REGNUM`/`midaSubgraphSetDMASplitMode`
 均无效。下一步是反编译 `createGraphSplitMN`，看它是否应当调用
 `SubgraphImpl::AddL2bAllocNode`。
+
+---
+
+## 26. `midaDeviceSetLimit` 签名修正（2026-10-31 12:45）
+
+```c
+midaStatus midaDeviceSetLimit(midaDeviceLimit limit, uint32_t value, midaDevice_t dev);
+```
+
+三参数（不是两参数）。修正后可把 limit[0]（L2B max，默认 8MB）设为 12/16MB，
+但对 matmul 和 unary 的行为没有影响。

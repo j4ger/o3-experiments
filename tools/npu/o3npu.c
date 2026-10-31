@@ -81,7 +81,7 @@ struct mida_api {
     int  (*device_release)(midaDevice_t);
     int  (*device_reset)(midaDevice_t);
     int  (*device_get_limit)(uint32_t *, int, midaDevice_t);
-    int  (*device_set_limit)(int, uint32_t);
+    int  (*device_set_limit)(int, uint32_t, midaDevice_t);
     int  (*sub_set_dma_split)(midaSubgraph_t, uint32_t);
 
     int  (*mem_alloc)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *);
@@ -155,7 +155,7 @@ static struct mida_api * mida_get(void) {
     a->device_release= (int (*)(midaDevice_t)) need_sym(a->lib, "midaDeviceRelease");
     a->device_reset  = (int (*)(midaDevice_t)) need_sym(a->lib, "midaDeviceReset");
     a->device_get_limit = (int (*)(uint32_t *, int, midaDevice_t)) dlsym(a->lib, "midaDeviceGetLimit");
-    a->device_set_limit = (int (*)(int, uint32_t)) dlsym(a->lib, "midaDeviceSetLimit");
+    a->device_set_limit = (int (*)(int, uint32_t, midaDevice_t)) dlsym(a->lib, "midaDeviceSetLimit");
     a->sub_set_dma_split = (int (*)(midaSubgraph_t, uint32_t)) dlsym(a->lib, "midaSubgraphSetDMASplitMode");
 
     a->mem_alloc     = (int (*)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *)) need_sym(a->lib, "midaMemoryAlloc");
@@ -424,7 +424,6 @@ struct o3npu_matmul {
 
 
 static void apply_limit_env(struct mida_api * a, midaDevice_t dev) {
-    (void) dev;
     const char * set = getenv("O3NPU_LIMIT_SET");
     if (!set || !*set || !a->device_set_limit) {
         return;
@@ -432,7 +431,7 @@ static void apply_limit_env(struct mida_api * a, midaDevice_t dev) {
     int idx = 0;
     unsigned long val = 0;
     if (sscanf(set, "%d:%lu", &idx, &val) == 2) {
-        int r = a->device_set_limit(idx, (uint32_t) val);
+        int r = a->device_set_limit(idx, (uint32_t) val, dev);
         printf("o3npu: set_limit[%d]=%lu -> %d\n", idx, val, r);
     }
 }
@@ -472,6 +471,9 @@ o3npu_matmul_t * o3npu_matmul_open(void) {
     midaDeviceConfig cfg;
     fill_devcfg(&cfg);
     int rc = a->device_get(&m->dev, 0, &cfg);
+    if (rc == 0 && m->dev) {
+        apply_limit_env(a, m->dev);
+    }
     if (rc == 0 && m->dev && env_int("O3NPU_RESET", 0) && a->device_reset) {
         int rr = a->device_reset(m->dev);
         if (m->trace) printf("o3npu: midaDeviceReset -> %d\n", rr);
@@ -934,7 +936,7 @@ int o3npu_limits(void) {
         int idx = 0;
         unsigned long val = 0;
         if (sscanf(set, "%d:%lu", &idx, &val) == 2) {
-            int r = a->device_set_limit(idx, (uint32_t) val);
+            int r = a->device_set_limit(idx, (uint32_t) val, dev);
             printf("set_limit[%d]=%lu -> %d\n", idx, val, r);
         }
     }
