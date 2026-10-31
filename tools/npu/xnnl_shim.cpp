@@ -190,7 +190,8 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
     rc = s->matmul(s->handle, (void *) subgraph,
                    di, in_ptr, dw, w_ptr,
                    nullptr, nullptr, nullptr, nullptr,
-                   dout, out_ptr, epl, transposed_w != 0, 0);
+                   dout, out_ptr, epl, transposed_w != 0,
+                   (uint32_t) strtoul(getenv("O3NPU_MM_LAST") ? getenv("O3NPU_MM_LAST") : "0", nullptr, 0));
 
     s->destroy_desc(di);
     s->destroy_desc(dw);
