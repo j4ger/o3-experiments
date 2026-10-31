@@ -27,7 +27,7 @@ extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
                                 const int in_dims[4], const void * in_ptr,
                                 const int w_dims[4], const void * w_ptr,
                                 const int out_dims[4], void * out_ptr,
-                                int transposed_w);
+                                int transposed_w, void * wscale, int nscale);
 
 /* ------------------------------------------------------------------ */
 /* small helpers                                                       */
@@ -415,6 +415,7 @@ struct o3npu_matmul {
     struct dbuf  in;
     struct dbuf  w;
     struct dbuf  out;
+    struct dbuf  wscale;
     struct dbuf  stack;
     int          trace;
     int          transposed_w;   /* 1: weight stays in ggml layout */
@@ -613,11 +614,23 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         w_dims[3] = K;
     }
 
+    void * wscale_ptr = NULL;
+    int    nscale = 0;
+    if (env_int("O3NPU_WSCALE", 0)) {
+        if (dbuf_reserve(a, m->dev, &m->wscale, (uint64_t) M * 4, "o3wscale") == 0) {
+            float * ps = (float *) m->wscale.cpu;
+            for (int i = 0; i < M; i++) ps[i] = 1.0f;
+            a->mem_cache_end(m->wscale.mem);
+            wscale_ptr = (void *) m->wscale.va;
+            nscale = M;
+        }
+    }
+
     rc = o3xnnl_matmul_graph(m->xnnl, sub,
                              in_dims, (const void *) m->in.va,
                              w_dims,  (const void *) m->w.va,
                              out_dims, (void *) m->out.va,
-                             m->transposed_w);
+                             m->transposed_w, wscale_ptr, nscale);
     if (rc != 0) {
         snprintf(m->err, sizeof m->err, "xnnlMatmulCreateGraph -> %d", rc);
         a->sub_destroy(sub);

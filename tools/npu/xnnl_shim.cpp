@@ -40,6 +40,7 @@ struct o3xnnl {
     int (*sign)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *);
     int (*rmsnorm)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *,
                    xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *, int, float, int);
+    int (*set_quant)(xnnlTensorDescriptor_t, bool, bool, const void *, const void *, int, int);
     int (*matmul)(xnnlHandle_t, void *, xnnlTensorDescriptor_t, const void *,
                   xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, const void *,
                   const void *, const void *, xnnlTensorDescriptor_t, void *,
@@ -98,6 +99,7 @@ int o3xnnl_open(void ** out, void * mida_device) {
         sym(s->lib, "xnnlSetTensorDescriptor", (void **) &s->set_desc) ||
         sym(s->lib, "xnnlCreateEpilogueDescriptor", (void **) &s->create_epl) ||
         sym(s->lib, "xnnlSetEpilogueDescriptor", (void **) &s->set_epl) ||
+        sym(s->lib, "xnnlSetTensorDescriptorQuantParam", (void **) &s->set_quant) ||
         sym(s->lib, "xnnlMatmulCreateGraph", (void **) &s->matmul)) {
         dlclose(s->lib);
         delete s;
@@ -163,7 +165,7 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
                         const int in_dims[4], const void * in_ptr,
                         const int w_dims[4], const void * w_ptr,
                         const int out_dims[4], void * out_ptr,
-                        int transposed_w) {
+                        int transposed_w, void * wscale, int nscale) {
     struct o3xnnl * s = (struct o3xnnl *) handle;
     if (!s || !subgraph) {
         return -1;
@@ -176,6 +178,11 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
     if ((rc = make_desc(s, &di, in_dims, "in")) != 0) return rc;
     if ((rc = make_desc(s, &dw, w_dims, "w")) != 0) return rc;
     if ((rc = make_desc(s, &dout, out_dims, "out")) != 0) return rc;
+
+    if (wscale && s->set_quant) {
+        int qr = s->set_quant(dw, true, false, wscale, nullptr, 0, 0);
+        fprintf(stderr, "xnnl_shim: set_quant(w, perChn=1, n=%d) -> %d\n", nscale, qr);
+    }
 
     if (!getenv("O3NPU_EPL_NULL")) {
         if (s->create_epl(&epl) != 0 || !epl) {
@@ -235,11 +242,15 @@ extern "C" int o3xnnl_unary(void * handle, void * subgraph, const char * name,
         return -2;
     }
     int dims[4] = { 1, 1, 1, n };
+    if (getenv("O3NPU_UNARY_DIMS")) {
+        dims[0] = 1; dims[1] = n; dims[2] = 1; dims[3] = 1;
+    }
     xnnlTensorDescriptor_t xd = nullptr, yd = nullptr;
     if (make_desc(s, &xd, dims, "uin") != 0) return -3;
     if (make_desc(s, &yd, dims, "uout") != 0) return -3;
     int l2b = 1024 * 1024;
-    const char * e = getenv("O3NPU_L2B");
+    const char * e = getenv("O3NPU_UNARY_L2BPARAM");
+    if (!e) e = getenv("O3NPU_L2B");
     if (e && *e) l2b = atoi(e);
     int rc;
     if (getenv("O3NPU_UNARY_INPLACE")) {
