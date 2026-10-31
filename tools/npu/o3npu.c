@@ -481,7 +481,7 @@ o3npu_matmul_t * o3npu_matmul_open(void) {
 
     midaDeviceConfig cfg;
     fill_devcfg(&cfg);
-    int rc = a->device_get(&m->dev, 0, &cfg);
+    int rc = a->device_get(&m->dev, (int) env_int("O3NPU_DEV_IDX", 0), &cfg);
     if (rc == 0 && m->dev) {
         apply_limit_env(a, m->dev);
     }
@@ -607,6 +607,7 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
 
     midaSubgraphConfig subcfg;
     memset(&subcfg, 0, sizeof subcfg);
+    *(uint32_t *) &subcfg = (uint32_t) env_int("O3NPU_SUBCFG0", 0);
     midaSubgraph_t sub = NULL;
     rc = a->sub_create(&sub, m->dev, &subcfg);
     if (rc != 0 || !sub) {
