@@ -80,7 +80,8 @@ struct mida_api {
     int  (*device_get)(midaDevice_t *, uint32_t, midaDeviceConfig *);
     int  (*device_release)(midaDevice_t);
     int  (*device_reset)(midaDevice_t);
-    int  (*device_get_limit)(midaDevice_t, int, uint64_t *);
+    int  (*device_get_limit)(uint32_t *, int, midaDevice_t);
+    int  (*device_set_limit)(int, uint32_t);
 
     int  (*mem_alloc)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *);
     int  (*mem_free)(midaMemory_t);
@@ -152,7 +153,8 @@ static struct mida_api * mida_get(void) {
     a->device_get    = (int (*)(midaDevice_t *, uint32_t, midaDeviceConfig *)) need_sym(a->lib, "midaDeviceGet");
     a->device_release= (int (*)(midaDevice_t)) need_sym(a->lib, "midaDeviceRelease");
     a->device_reset  = (int (*)(midaDevice_t)) need_sym(a->lib, "midaDeviceReset");
-    a->device_get_limit = (int (*)(midaDevice_t, int, uint64_t *)) dlsym(a->lib, "midaDeviceGetLimit");
+    a->device_get_limit = (int (*)(uint32_t *, int, midaDevice_t)) dlsym(a->lib, "midaDeviceGetLimit");
+    a->device_set_limit = (int (*)(int, uint32_t)) dlsym(a->lib, "midaDeviceSetLimit");
 
     a->mem_alloc     = (int (*)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *)) need_sym(a->lib, "midaMemoryAlloc");
     a->mem_free      = (int (*)(midaMemory_t)) need_sym(a->lib, "midaMemoryFree");
@@ -416,6 +418,21 @@ struct o3npu_matmul {
     int          transposed_w;   /* 1: weight stays in ggml layout */
     char         err[256];
 };
+
+
+static void apply_limit_env(struct mida_api * a, midaDevice_t dev) {
+    (void) dev;
+    const char * set = getenv("O3NPU_LIMIT_SET");
+    if (!set || !*set || !a->device_set_limit) {
+        return;
+    }
+    int idx = 0;
+    unsigned long val = 0;
+    if (sscanf(set, "%d:%lu", &idx, &val) == 2) {
+        int r = a->device_set_limit(idx, (uint32_t) val);
+        printf("o3npu: set_limit[%d]=%lu -> %d\n", idx, val, r);
+    }
+}
 
 static int env_int(const char * name, int def) {
     const char * v = getenv(name);
@@ -864,6 +881,20 @@ int o3npu_rmsnorm_test(int K, int trace) {
         rc = a->stream_sync(st);
         printf("rmsnorm sync -> %d (%s)\n", rc, err_str(a, rc));
     }
+    if (rc == 0) {
+        a->mem_cache_end(out.mem);
+        const uint16_t * po = (const uint16_t *) out.cpu;
+        int bad = 0;
+        for (int i = 0; i < K; i++) {
+            float v = o3npu_fp16_to_fp32(po[i]);
+            if (fabsf(v - 1.0f) > 2e-3f) {
+                if (bad < 4 && trace) printf("rmsnorm: out[%d]=%f expect 1.0\n", i, v);
+                bad++;
+            }
+        }
+        printf("rmsnorm check: %d/%d mismatch\n", bad, K);
+        if (bad) rc = 1;
+    }
     (void) trace;
     return rc;
 }
@@ -877,11 +908,19 @@ int o3npu_limits(void) {
     midaDevice_t dev = NULL;
     int rc = a->device_get(&dev, 0, &cfg);
     if (rc != 0 || !dev) { printf("device -> %d\n", rc); return -2; }
-    for (int i = 0; i < 12; i++) {
-        uint64_t v = 0;
-        int r = a->device_get_limit(dev, i, &v);
-        printf("limit[%d] rc=%d value=%llu (0x%llx)\n", i, r,
-               (unsigned long long) v, (unsigned long long) v);
+    const char * set = getenv("O3NPU_LIMIT_SET");
+    if (set && *set && a->device_set_limit) {
+        int idx = 0;
+        unsigned long val = 0;
+        if (sscanf(set, "%d:%lu", &idx, &val) == 2) {
+            int r = a->device_set_limit(idx, (uint32_t) val);
+            printf("set_limit[%d]=%lu -> %d\n", idx, val, r);
+        }
+    }
+    for (int i = 0; i < 16; i++) {
+        uint32_t v = 0;
+        int r = a->device_get_limit(&v, i, dev);
+        printf("limit[%d] rc=%d value=%u (0x%x)\n", i, r, v, v);
     }
     return 0;
 }
@@ -896,6 +935,7 @@ int o3npu_unary_test(const char * name, int n, int trace) {
     midaDevice_t dev = NULL;
     int rc = a->device_get(&dev, 0, &cfg);
     if (rc != 0 || !dev) { printf("unary device -> %d\n", rc); return -2; }
+    apply_limit_env(a, dev);
 
     midaStreamConfig sc;
     memset(&sc, 0, sizeof sc);
@@ -933,9 +973,10 @@ int o3npu_unary_test(const char * name, int n, int trace) {
 
     midaSubgraphExecParams ep;
     memset(&ep, 0, sizeof ep);
+    ep.l2bSize = (uint32_t) env_int("O3NPU_L2B", 0);
     midaSubgraphExec_t ex = NULL;
     rc = a->sub_instantiate(&ex, sub, &ep);
-    printf("unary %s instantiate -> %d\n", name, rc);
+    printf("unary %s instantiate -> %d (l2b=%u)\n", name, rc, ep.l2bSize);
     if (rc != 0) return -8;
 
     midaLaunchConfig lc;
