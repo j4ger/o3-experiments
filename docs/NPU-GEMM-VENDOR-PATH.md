@@ -169,3 +169,33 @@ Created handle with 64 discrete ELF modules
   `gemmSplitMNEpilogueFusedKernel` 所在的 discrete ELF 模块；
 - 要跑通 GemmSplitMN，必须先获得模型目录自带的 `libxnnl.so` 及其 kernel
   modules（或从厂商侧提供同等模块），这不是靠猜参数能解决的。
+
+## 2026-11-01 CDN 复核：MiMo 模型包
+
+用 `tools/query-ai-config.mjs`（secret 来自 APK `R.string.secret_key`）取到：
+
+```
+mimo_model_f3 v19
+  fileName  mimo_model_f3-1.taiyi.model
+  fileSize  1,665,610,611
+  fileHash  3c445147bc06f3c353671956f4c1ad148ce34842479b626d6632d467fef229fb
+  fileUrl   https://ai-model-cdn.engine.miui.com/ai-taiyi-platform-bucket/deploy/model/e21ab4b9-1bef-45ba-af6f-cd8f6dfb5f3a/mimo_model_f3-1.taiyi.model
+```
+
+用 HTTP Range 只取 ZIP 中央目录 + `libxnnl.so` 条目：
+
+- 模型 ZIP 共 21 个条目，没有 `.k_abi` / kernel module 文件；
+- 取出的 `libxnnl.so` 9,278,376 B，
+  `sha256 = e8bc1b849fdefad35d6faed29b4aa4f99bb5edae5cd79a2bf54e2ced683961db`，
+  与 Qwen 模型包里的 `artifacts/cdn/libxnnl.so` **完全相同**。
+
+把 MiMo 版 `libxnnl.so` push 到设备并用 `O3NPU_XNNL_LIB` 加载后，仍然：
+
+```
+xnnl_shim: loading /data/local/tmp/libxnnl_model.so
+addGemmSplitMN(box) -> 3
+kernel 'gemmSplitMNEpilogueFusedKernel' not found in any discrete module
+```
+
+结论：**MiMo 模型包也不能提供这个 kernel module**；缺失模块不在模型 ZIP 中，
+更可能在 vendor 的 UMD/firmware 侧，或需要不同的 device/kernel 配置。
