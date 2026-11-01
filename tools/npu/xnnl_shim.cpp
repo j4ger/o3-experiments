@@ -357,7 +357,8 @@ extern "C" int o3xnnl_gemm_splitmn(void * handle, void * subgraph,
     int p3  = env_i("O3NPU_GEMM_PARAM3", 2);
     int p10 = env_i("O3NPU_GEMM_PARAM10", 5);
     int p18 = env_i("O3NPU_GEMM_PARAM18", 2);
-    int rc = s->add_gemm(s->handle, subgraph, p3, &bi, &bw, 0, 0, 0, &bo,
+    /* xnnlAddGemmSplitMNKernelNode(graph, handle, ...), not (handle, graph)! */
+    int rc = s->add_gemm(subgraph, s->handle, p3, &bi, &bw, 0, 0, 0, &bo,
                          p10, 1, 0, transposed_w ? 1 : 0, 0, 0, nullptr, nullptr, p18);
     fprintf(stderr, "xnnl_shim: addGemmSplitMN(box, p3=%d p10=%d p18=%d) -> %d\n",
             p3, p10, p18, rc);

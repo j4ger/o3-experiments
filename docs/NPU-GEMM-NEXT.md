@@ -12,7 +12,7 @@
 - 两边的 `gemmSplitMNEpilogueFusedKernel` 都有完整的
   `.k_text` / `.k_abi` / `.k_arg` / `.k_info` 节。
 
-真正的问题是 **运行时查找/注册失败**，不是文件缺失：
+真正的问题是 **调用参数顺序反了**，不是文件缺失，也不是 kernel 不存在：
 
 ```
 xnnlAddGemmSplitMNKernelNode -> 3
@@ -21,16 +21,31 @@ xnnlAddGemmSplitMNKernelNode -> 3
                          not found in any discrete module
 ```
 
+静态证据链：
+
+- `xnnlAddGemmSplitMNKernelNode`（libxnnl `0x665edc`）把 `x0` 存为 `x21`、`x1` 存为 `x20`，
+  然后调用 `GemmSplitMNImpl::addKernel` 时传 `x1=x21, x2=x20`；
+- `GemmSplitMNImpl::addKernel` 的第二个显式参数是 `xnnlHandle*`，它把这个 `x2` 交给
+  `getKernelPara(..., handle)`，后者再调 `xnnlUmdWrapper::GetFunction(..., handle, name)`；
+- 因此 `xnnlAddGemmSplitMNKernelNode` 的公开签名是 **`(graph, handle, ...)`**；
+- 厂商 `xnnlLlmDecodeFfnLayer::createGraph` 的 prologue 把 `x1`（handle）存到 `this+0x2a0`、
+  `x2`（graph）存到 `this+0x2a8`，调用点取 `x0=[this+0x2a8], x1=[this+0x2a0]`，再次确认
+  **graph 在前、handle 在后**。
+
+之前 probe 传的是 `(handle, subgraph)`，导致 `addKernel` 把 `subgraph` 当成 `xnnlHandle*`
+去查 kernel，必然返回 11。已修正为 `(subgraph, handle)`。
+
 ## 1. 三个假设（按优先级）
 
 | # | 假设 | 判别方法 |
 |---|---|---|
+| H0 | **`xnnlAddGemmSplitMNKernelNode(graph, handle, ...)` 参数顺序写反**（已确认并修复） | 用修正后的 probe 直接跑；若 node 构建成功，H0 成立 |
 | H1 | `GemmSplitMNImpl` 实际查找的 name 与日志打印的 name 不同（可能带后缀/variant） | 调 `xnnlGetGemmSplitMNKernelName`，与 module 的 `.k_*` 节名逐字比对 |
 | H2 | 包含该 kernel 的 module 没有被 `xnnlCreate` 收进 handle（加载失败/索引错/版本过滤） | `xnnlGetDiscreteElfName/Data/Size` + `midaModuleLoadData` + `midaModuleGetFunction` |
 | H3 | module 能加载，但 kernel ABI 与当前 UMD/firmware 不匹配（`0x102e0000` vs 能跑的 RMSNorm `0x10260000`） | `midaModuleGetFunction` 对精确 name 的返回值；对比 system/CDN 两份 lib |
 
-如果 H1 成立，改参数/改 name 即可；H2 成立，查 `xnnlCreate` 的模块表；H3 成立，
-这条运行 kernel 的路线基本走不通，应转 NBG/预编译模型或 CPU/GPU 回退。
+H0 是当前最高优先级：如果修正参数顺序后直接成功，后面的 H1/H2/H3 都不需要测试。
+H1 成立则改参数/name；H2 成立查 `xnnlCreate` 模块表；H3 成立则转 NBG/预编译模型或 CPU/GPU 回退。
 
 ## 2. 离线工作（先做，不碰设备）
 
@@ -114,6 +129,9 @@ int midaModuleGetFunction(void **out, void *module, const char *name);
 
 按顺序执行，任何一步失败就停在该层：
 
+0. **E0 直接重试（最高优先级）**：用修正后的 probe 跑
+   `O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=2 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2`
+   （transposed_w=1），看 node 是否不再返回 3/11。如果成功，直接进入 E5。
 1. **E1 模块表**：`--modules`，确认 gemm module 的 index/name/load=0。
 2. **E2 函数查找**：`--funcs`，看 `midaModuleGetFunction` 能否拿到精确 name 的 fn 指针。
    - 失败 → H2/H3；
@@ -128,16 +146,19 @@ int midaModuleGetFunction(void **out, void *module, const char *name);
 ## 4. 判定树
 
 ```
-E2 失败
- ├─ 所有 gemm kernel name 都失败 -> H2/H3：module 未注册或 ABI 不匹配
- │    ├─ 换 system lib / CDN lib 各试一次
- │    ├─ 检查 xnnlCreate 实际加载的 module 数
- │    └─ 仍失败 -> 停止 kernel 路线，转 NBG/CPU/GPU
- └─ 部分 name 成功 -> 用成功的 name 反向修正 GemmSplitMN 参数
-E2 成功但 E4 失败
- └─ xnnlUmdWrapper/GetFunction 的 key 或 handle 问题 -> 抓 name 与 handle 对比
-E4 成功但 E5 失败
- └─ 权重 reorder / TMA 描述符问题 -> 反编译 GemmSplitMNImpl::getKernelPara / init*TmaDesc
+E0 成功
+ └─ 参数顺序就是根因，直接进入 E5；不需要再查 module/name
+E0 仍失败
+ ├─ E2 失败
+ │   ├─ 所有 gemm kernel name 都失败 -> H2/H3：module 未注册或 ABI 不匹配
+ │   │   ├─ 换 system lib / CDN lib 各试一次
+ │   │   ├─ 检查 xnnlCreate 实际加载的 module 数
+ │   │   └─ 仍失败 -> 停止 kernel 路线，转 NBG/CPU/GPU
+ │   └─ 部分 name 成功 -> 用成功的 name 反向修正 GemmSplitMN 参数
+ ├─ E2 成功但 E4 失败
+ │   └─ xnnlUmdWrapper/GetFunction 的 key 或 handle 问题 -> 抓 name 与 handle 对比
+ └─ E4 成功但 E5 失败
+     └─ 权重 reorder / TMA 描述符问题 -> 反编译 GemmSplitMNImpl::getKernelPara / init*TmaDesc
 ```
 
 ## 5. 保底路线

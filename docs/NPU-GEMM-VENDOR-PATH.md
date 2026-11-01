@@ -261,6 +261,22 @@ midaModuleGetFunction(void **out, void *module, const char *name)
 `--funcs` 禁用很可能就是签名弄反。若 module 向量里没有任何模块返回成功，最终打印
 `kernel '...' not found in any discrete module` 并返回 11。
 
-因此下一步的决定性检查是：对 `xnnlGetDiscreteElfName` 列出的每个 module 调用
+### 决定性发现：`xnnlAddGemmSplitMNKernelNode` 是 `(graph, handle, ...)`
+
+`xnnlAddGemmSplitMNKernelNode`（`0x665edc`）把 `x0` 存为 `x21`、`x1` 存为 `x20`，调用
+`GemmSplitMNImpl::addKernel` 时传 `x1=x21, x2=x20`。而 `addKernel` 的第二个显式参数是
+`xnnlHandle*`，会把它交给 `getKernelPara` 再调用 `xnnlUmdWrapper::GetFunction`。所以
+`x0` 必须是 graph/subgraph，`x1` 必须是 xnnl handle。
+
+厂商 `xnnlLlmDecodeFfnLayer::createGraph`（`0x6cfcb8`）prologue 把 `x1`（handle）存到
+`this+0x2a0`、`x2`（graph）存到 `this+0x2a8`；`createGraphWithKernelOp` 在 `0x6d14e0`
+取 `x0=[this+0x2a8], x1=[this+0x2a0]`，即 graph 在前、handle 在后。
+
+之前 probe 的 `o3xnnl_gemm_splitmn` 调用的是 `(handle, subgraph)`，顺序反了，导致
+`addKernel` 把 `subgraph` 当作 `xnnlHandle*` 去查 kernel，因此必然返回
+`umd status=11`。现已修正为 `(subgraph, handle)`；下一次上机先直接重试 E0。
+
+因此下一步的决定性检查是：先用修正后的参数顺序重试；若仍失败，再对
+`xnnlGetDiscreteElfName` 列出的每个 module 调用
 `midaModuleGetFunction(&fn, mod, "gemmSplitMNEpilogueFusedWithSiluKernel")`，确认
 到底是“名字错”“module 没在 handle 里”还是“module ABI 不匹配”。
