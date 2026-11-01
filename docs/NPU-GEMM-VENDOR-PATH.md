@@ -299,3 +299,7 @@ K=576 M=576 T=1 max|NPU-CPU|=24.4512 MISMATCH
 - 当前卡点从“kernel 找不到”推进到“kernel 已加入但未写回输出”；下一步查
   `weightL1bBytes_=294912 > sharedMemBytes_=131072`、`stack mem is null`，
   以及厂商 `xnnlLlmDecodeFfnLayer::addAllocNodes` / `AddL2bReadNode` 的图构建步骤。
+- 离线复核又发现探针读回顺序错误：`o3npu_matmul_run` 在 `stream_sync` 后用
+  `dbuf_sync_cpu`（`midaMemoryCacheStart`）读输出，而 RMSNorm/unary 探针是先用
+  `mem_cache_end` invalidate 再读。已改为读前 `dbuf_sync_dev`、读后
+  `dbuf_sync_cpu`，构建通过，待设备复测。

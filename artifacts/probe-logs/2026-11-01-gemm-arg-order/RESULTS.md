@@ -68,6 +68,21 @@ stack mem is null
 补充：`O3NPU_PATH=graph`（走 `midaGraph*` 路径）在同样参数下直接 segfault（139），
 raw graph 路径暂不可用。
 
+## 结果四：离线复核发现读回 cache 顺序错误（待复测）
+
+`tools/npu/o3npu.c` 的 `o3npu_matmul_run` 在 `stream_sync` 后先调用了
+`dbuf_sync_cpu`（`midaMemoryCacheStart`），再读输出；而 RMSNorm/unary 探针的
+正确顺序是同步后先 `mem_cache_end`（invalidate），再读。已在两个 launch 分支改为：
+
+```
+dbuf_sync_dev(a, &m->out);   /* 读前 invalidate */
+... read ...
+dbuf_sync_cpu(a, &m->out);   /* 读后 */
+```
+
+重新构建 `tools/probe/build.sh /tmp/probe_npu_matmul_p0` 通过；设备恢复后先复测
+`param3=0 / p10=5 / p18=2 / transposed_w=1`，若输出非零则 cache 顺序就是第二个根因。
+
 ## 复现
 
 ```

@@ -146,9 +146,14 @@ int midaModuleGetFunction(void **out, void *module, const char *name);
 4. **E4 node 构建**：用厂商参数调 `xnnlAddGemmSplitMNKernelNode`；若仍 status=11，
    用 `LD_PRELOAD` 包一层 `midaModuleGetFunction`，记录 module handle、name、返回值。
 5. **E5 输出为零（当前卡点）**：node 已构建成功并 instantiate/launch/sync 0，但输出全 0。
-   需要查 `weightL1bBytes_=294912 > sharedMemBytes_=131072`、`stack mem is null`，
-   以及厂商 `xnnlLlmDecodeFfnLayer::addAllocNodes` / `AddL2bReadNode` 的图构建步骤；
-   之后再处理 `xnnlGemmSplitMNKernelReorder` / `GemmSplitMNKernelParaStorage`。
+   离线复核发现 `o3npu_matmul_run` 读回顺序错了：它在读 NPU 输出前调用
+   `dbuf_sync_cpu`（`midaMemoryCacheStart`），而 RMSNorm/unary 探针在同步后是
+   先调用 `mem_cache_end` 再读。已改为读前 `dbuf_sync_dev`（invalidate），读后
+   `dbuf_sync_cpu`；重新构建通过，待设备复测。
+   若复测仍为 0，再查 `weightL1bBytes_=294912 > sharedMemBytes_=131072`、
+   `stack mem is null`，以及厂商 `xnnlLlmDecodeFfnLayer::addAllocNodes` /
+   `AddL2bReadNode` 的图构建步骤；之后再处理
+   `xnnlGemmSplitMNKernelReorder` / `GemmSplitMNKernelParaStorage`。
 
 ## 4. 判定树
 

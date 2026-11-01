@@ -737,14 +737,15 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
             return -7;
         }
 
-        dbuf_sync_cpu(a, &m->out);
+        /* device -> CPU: invalidate before reading NPU output */
+        dbuf_sync_dev(a, &m->out);
         {
             const uint16_t * o = (const uint16_t *) m->out.cpu;
             for (size_t i = 0, n = (size_t) M * T; i < n; i++) {
                 out_f32[i] = fp16_to_fp32(o[i]);
             }
         }
-        dbuf_sync_dev(a, &m->out);
+        dbuf_sync_cpu(a, &m->out);
 
         if (a->graph_exec_destroy) a->graph_exec_destroy(gexec);
         a->sub_destroy(sub);
@@ -841,14 +842,15 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         return -7;
     }
 
-    dbuf_sync_cpu(a, &m->out);
+    /* device -> CPU: invalidate before reading NPU output */
+    dbuf_sync_dev(a, &m->out);
     {
         const uint16_t * o = (const uint16_t *) m->out.cpu;
         for (size_t i = 0, n = (size_t) M * T; i < n; i++) {
             out_f32[i] = fp16_to_fp32(o[i]);
         }
     }
-    dbuf_sync_dev(a, &m->out);
+    dbuf_sync_cpu(a, &m->out);
 
     a->sub_exec_destroy(exec);
     a->sub_destroy(sub);
