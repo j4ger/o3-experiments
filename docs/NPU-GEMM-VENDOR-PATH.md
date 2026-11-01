@@ -109,3 +109,63 @@ x7 = 0
 即使给 `shell` 域加 `priv_app_36`/`priv_app_data_file` 的 allow 规则也无法读取；
 `ksud sepolicy patch` 不能修改 MLS 约束。因此模型自带的 `libxnnl.so`
 目前只能通过进程 maps 确认路径，无法直接 pull 出来做静态对比。
+
+## 2026-11-01 离线确认结果（GemmSplitMN probe）
+
+### xnnlTensorBox 真实布局（dumpInfo 反编译）
+
+`xnnlTensorBox` 是普通结构体，不是 `xnnlTensorDescriptor`：
+
+| 偏移 | 字段 |
+|---|---|
+| +0x00 | `tensorShape[6]` |
+| +0x18 | `boxStart[6]` |
+| +0x30 | `boxDim[6]` |
+| +0x48 | `rank` |
+| +0x50 | `global address`（DDR VA） |
+| +0x58 | `layout`（NHWC=2） |
+| +0x5c | `dataType`（HALF=1） |
+| +0x60 | `location`（DDR=0, L2B=1） |
+| +0x64 | `isQuant` |
+| +0x65 | `isPerChn` |
+| +0x66 | `isAsym` |
+| +0x70 | `scale address` |
+| +0x78 | `dTypeScale` |
+| +0x80 | `zp address` |
+| +0x88 | `dTypeZp` |
+| +0x8c | `groupwiseCnt` |
+
+### 调用结果
+
+用上述 box 调用 `xnnlAddGemmSplitMNKernelNode`：
+
+```
+xnnl_shim: addGemmSplitMN(box) -> 3
+[XNNL] [gemm_splitMN_kernel.cpp:1569]: call umd failed! umd status=11
+[XNNL] [xnnlUmdWrapper.cpp:441]: kernel 'gemmSplitMNEpilogueFusedKernel'
+       not found in any discrete module
+```
+
+`paramCheck`（input/weight/output/layout/shape）已全部通过，
+失败点不在 API 参数，而在 **kernel module 查找**。
+
+### 根因
+
+`xnnlCreate` 日志：
+
+```
+Created handle with 64 discrete ELF modules
+```
+
+系统 `/vendor/lib64/libxnnl.so` 只带 64 个 discrete ELF 模块，不包含
+`gemmSplitMNEpilogueFusedKernel`。厂商模型目录里的
+`/data/user_de/.../model/mimo_model_f3/19/libxnnl.so` 才带 LLM kernel 模块
+（maps 中可见该文件，但 MCS 保护无法读取）。
+
+### 结论
+
+- `xnnlAddGemmSplitMNKernelNode` 的 ABI/box 已经离线恢复并能通过 paramCheck；
+- 但第三方进程用系统 `libxnnl.so` **无法执行 GemmSplitMN**，因为它缺少
+  `gemmSplitMNEpilogueFusedKernel` 所在的 discrete ELF 模块；
+- 要跑通 GemmSplitMN，必须先获得模型目录自带的 `libxnnl.so` 及其 kernel
+  modules（或从厂商侧提供同等模块），这不是靠猜参数能解决的。
