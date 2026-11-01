@@ -197,5 +197,34 @@ addGemmSplitMN(box) -> 3
 kernel 'gemmSplitMNEpilogueFusedKernel' not found in any discrete module
 ```
 
-结论：**MiMo 模型包也不能提供这个 kernel module**；缺失模块不在模型 ZIP 中，
-更可能在 vendor 的 UMD/firmware 侧，或需要不同的 device/kernel 配置。
+## 2026-11-01 复核修正：kernel 并没有缺失
+
+上面的“根因”不成立。用 `tools/npu/list-kernels.mjs` 重新核对：
+
+| 文件 | 大小 | kernel modules | kernels | `gemmSplitMNEpilogueFusedKernel` |
+|---|---:|---:|---:|---|
+| `artifacts/vendor/libxnnl.so`（系统 `/vendor/lib64`） | 8,716,144 | 64 | 686 | 有（module offset `0x0f0ac3`，62 kernels） |
+| `artifacts/cdn/libxnnl.so`（Qwen/MiMo 模型包） | 9,278,376 | 66 | 690 | 有（module offset `0x0e08f1`，62 kernels） |
+| `/tmp/libxnnl_mimo_model.so`（MiMo ZIP 取出） | 9,278,376 | 66 | 690 | 同上，sha256 与 CDN 完全一致 |
+
+所以：
+
+- “系统 `libxnnl.so` 只有 64 个模块，不包含 `gemmSplitMNEpilogueFusedKernel`”是错的；
+- “只有模型目录自带的 `libxnnl.so` 才带 LLM kernel”也是错的；
+- 之前只检查了 `module[39]`（MatmulOp）和 `module[44]`（RMSNormQ），没有检查真正包含
+  GemmSplitMN 的模块（ELF 扫描顺序里的 `module[30]`；`xnnlGetDiscreteElf` 的索引顺序
+  可能不同，需要上机确认）。
+
+真正的失败链仍然是：
+
+```
+xnnlAddGemmSplitMNKernelNode
+  -> GemmSplitMNImpl::addKernel
+  -> xnnlUmdWrapper::GetFunction
+  -> midaModuleGetFunction
+  -> status 11
+  -> kernel 'gemmSplitMNEpilogueFusedKernel' not found in any discrete module
+```
+
+也就是说：**kernel 在 ELF 里，但运行时没有把它注册/查找到**。下一步应查“名字是否一致、
+模块是否被 `xnnlCreate` 收进 handle、模块 ABI 是否匹配”，而不是继续找缺失文件。
