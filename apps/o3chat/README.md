@@ -44,3 +44,29 @@ Tested against `com.xiaomi.aiservice` 4.2.12 on HyperOS 4 / Android 17.
 The Mimo model path (`ai_api = mimo_dev`) needs a different entry sequence; the
 research notes are in
 [`../../archive/o3chat-mimo-notes.md`](../../archive/o3chat-mimo-notes.md).
+
+## CLI mode
+
+`CliActivity` is a headless entry point that binds the same `TaiyiClient` as the UI
+and prints every callback to logcat under the `O3CHAT_CLI` tag.
+
+```bash
+# Qwen3 0.7B VLM
+adb shell am start -n dev.j4ger.o3chat/.CliActivity \
+    --es prompt "用一句中文介绍你自己" --es model vlm
+
+# MiMo (auto llm_init + executeChat)
+adb shell am start -n dev.j4ger.o3chat/.CliActivity \
+    --es prompt "用一句中文介绍你自己" --es model mimo
+
+# read the result
+adb logcat -d -s O3CHAT_CLI
+```
+
+Optional extras: `--ez chat true` (executeChat + json_source), `--ez init true`
+(only send `ai:method:llm_init`).
+
+Verified 2026-11-01 on the O3 device:
+
+- VLM: `我是一个AI语言模型，能够理解并回答中文问题，提供各种信息和帮助。`
+- MiMo: `我是 MiMo，一个由小米创造的 AI 助手。……`

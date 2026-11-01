@@ -33,6 +33,11 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <activity
+            android:name=".CliActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
+
+        <activity
             android:name=".ChatActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
