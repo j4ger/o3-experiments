@@ -1,0 +1,10 @@
+xnnl_shim: addGemmSplitMN(box, p3=2 p10=5 p18=2) -> 0
+== probe_npu_matmul (weight layout: ggml) ==
+o3npu_matmul: device=0xb400007ca26112f0 stream=0xb400007cd2617010 transposed_w=1
+o3npu: buf o3in    size=4096 flag=5 cpu=0x7bafcdc000 fd=28082 va=0x456000
+o3npu: buf o3w     size=663552 flag=5 cpu=0x7baf115000 fd=28083 va=0x457000
+o3npu: buf o3out   size=4096 flag=5 cpu=0x7bafcdb000 fd=28084 va=0x4f9000
+K=576 M=576 T=1  FAILED  rc=-5  midaSubgraphInstantiate -> 1 (midaErrorInvalidValue)
+RESULT failed (1 failures)
+
+__EXIT=4

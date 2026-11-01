@@ -129,9 +129,14 @@ int midaModuleGetFunction(void **out, void *module, const char *name);
 
 按顺序执行，任何一步失败就停在该层：
 
-0. **E0 直接重试（最高优先级）**：用修正后的 probe 跑
-   `O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=2 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2`
-   （transposed_w=1），看 node 是否不再返回 3/11。如果成功，直接进入 E5。
+0. **E0 直接重试（最高优先级，已完成）**：用修正后的 probe 跑
+   `O3NPU_GEMM=1 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2`（transposed_w=1）。
+   实测：
+   - `param3=2`：`addGemmSplitMN -> 0`，但 instantiate 报
+     `queue id set is not continuous:2`（`param3` 是 queue id，单节点子图要用 0）；
+   - `param3=0`：`addGemmSplitMN -> 0`、instantiate/launch/sync 全部 0；
+   - XNNL 日志确认 kernel 为 `gemmSplitMNEpilogueFusedWithSiluKernel`；
+   - **输出仍为 0**，所以 node 构建/查找已经不是问题，下一步是 E5 的 L2B/stack/TMA。
 1. **E1 模块表**：`--modules`，确认 gemm module 的 index/name/load=0。
 2. **E2 函数查找**：`--funcs`，看 `midaModuleGetFunction` 能否拿到精确 name 的 fn 指针。
    - 失败 → H2/H3；
@@ -140,8 +145,10 @@ int midaModuleGetFunction(void **out, void *module, const char *name);
    与当前参数各跑一次，打印返回 name，和 module 节名逐字比较。
 4. **E4 node 构建**：用厂商参数调 `xnnlAddGemmSplitMNKernelNode`；若仍 status=11，
    用 `LD_PRELOAD` 包一层 `midaModuleGetFunction`，记录 module handle、name、返回值。
-5. **E5 launch**：node 构建成功后才会进入 TMA/权重布局阶段；届时再处理
-   `xnnlGemmSplitMNKernelReorder` / `GemmSplitMNKernelParaStorage`。
+5. **E5 输出为零（当前卡点）**：node 已构建成功并 instantiate/launch/sync 0，但输出全 0。
+   需要查 `weightL1bBytes_=294912 > sharedMemBytes_=131072`、`stack mem is null`，
+   以及厂商 `xnnlLlmDecodeFfnLayer::addAllocNodes` / `AddL2bReadNode` 的图构建步骤；
+   之后再处理 `xnnlGemmSplitMNKernelReorder` / `GemmSplitMNKernelParaStorage`。
 
 ## 4. 判定树
 
@@ -177,5 +184,7 @@ E0 仍失败
 - `tools/npu/o3npu.c` 已把 `--modules` / `--funcs` 扩展到全模块，并修正 `midaModuleGetFunction` 参数顺序；
 - `tools/probe/probe_npu_matmul.cpp` 已启用 `--funcs`、新增 `--gemm-name`；
 - 构建验证：`tools/probe/build.sh /tmp/probe_npu_matmul_p0` 通过（arm64 Android）；
-- 设备实验记录写入 `artifacts/probe-logs/`，每个实验只保留一个变量；
+- 设备实测：`param3=0` 时 node/instantiate/launch/sync 全 0，kernel 名为
+  `gemmSplitMNEpilogueFusedWithSiluKernel`，但输出仍为 0；
+- 原始记录：`artifacts/probe-logs/2026-11-01-gemm-arg-order/`；
 - 最终以“能否在第三方进程里拿到 `gemmSplitMNEpilogueFusedKernel` 的 fn 指针”为 Go/No-Go 判据。

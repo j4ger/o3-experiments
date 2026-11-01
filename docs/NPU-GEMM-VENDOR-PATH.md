@@ -280,3 +280,22 @@ midaModuleGetFunction(void **out, void *module, const char *name)
 `xnnlGetDiscreteElfName` 列出的每个 module 调用
 `midaModuleGetFunction(&fn, mod, "gemmSplitMNEpilogueFusedWithSiluKernel")`，确认
 到底是“名字错”“module 没在 handle 里”还是“module ABI 不匹配”。
+
+### 实测（2026-11-01 20:42）
+
+修正为 `(subgraph, handle)` 后：
+
+```
+xnnl_shim: addGemmSplitMN(box, p3=0 p10=5 p18=2) -> 0
+o3npu: stack_info rc=1 size=0 mem=0x0
+K=576 M=576 T=1 max|NPU-CPU|=24.4512 MISMATCH
+```
+
+- `param3=2` 时 `addGemmSplitMN -> 0`，但 `midaSubgraphInstantiate` 报
+  `queue id set is not continuous:2`；`param3` 是 queue id，单节点子图要传 0。
+- `param3=0` 时 instantiate/launch/sync 全 0；XNNL 日志确认 kernel 为
+  `gemmSplitMNEpilogueFusedWithSiluKernel`（`actMode=5`，`allHeadNum_=0`，
+  `configType_=2`），但输出仍全 0。
+- 当前卡点从“kernel 找不到”推进到“kernel 已加入但未写回输出”；下一步查
+  `weightL1bBytes_=294912 > sharedMemBytes_=131072`、`stack mem is null`，
+  以及厂商 `xnnlLlmDecodeFfnLayer::addAllocNodes` / `AddL2bReadNode` 的图构建步骤。
