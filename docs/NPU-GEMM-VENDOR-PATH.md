@@ -228,3 +228,39 @@ xnnlAddGemmSplitMNKernelNode
 
 也就是说：**kernel 在 ELF 里，但运行时没有把它注册/查找到**。下一步应查“名字是否一致、
 模块是否被 `xnnlCreate` 收进 handle、模块 ABI 是否匹配”，而不是继续找缺失文件。
+
+## 2026-11-01 静态补充：name 构造与 lookup
+
+`xnnlGetGemmSplitMNKernelName`（libxnnl `0x667400`）是以下函数的公开包装：
+
+```
+getKernelName(std::string&, xnnlTensorBox*, xnnlActivationType_t,
+              unsigned int, bool, unsigned int)
+```
+
+它先写基础名 `gemmSplitMNEpilogueFusedKernel`，再按 `actMode` 改写：
+
+| 条件 | 结果 |
+|---|---|
+| `actMode == 0` | `gemmSplitMNEpilogueFusedKernel` |
+| `actMode == 5` | `gemmSplitMNEpilogueFusedWithSiluKernel` |
+| `actMode == 6` | `llmGemmSplitMNWithGelu` / `llmDecoderFfnGateGelu`（按 bool 分支） |
+| `actMode == 7` | `llmGemmSplitMNWithSwigluKernel` |
+| `allHeadNum != 0` | `llmGemmSplitMNWithHeadTransposeKernel`（覆盖前面的名字） |
+| flags bit0..3 | 追加 `TransB` / `Gw` / `Ew` / `Sdp` 变体后缀 |
+
+厂商 FFN 调用点传 `actMode=5`，而当前 probe 之前默认传 `actMode=0`，所以日志里看到的是
+基础名。`xnnlUmdWrapper::GetFunction`（`0x5765d8`）先查 handle 的 name→function map，
+查不到再遍历 handle 的 module 向量，逐个调用：
+
+```
+midaModuleGetFunction(void **out, void *module, const char *name)
+```
+
+注意参数顺序是 `(out, module, name)`，不是 `(module, name, out)`；之前 probe 的
+`--funcs` 禁用很可能就是签名弄反。若 module 向量里没有任何模块返回成功，最终打印
+`kernel '...' not found in any discrete module` 并返回 11。
+
+因此下一步的决定性检查是：对 `xnnlGetDiscreteElfName` 列出的每个 module 调用
+`midaModuleGetFunction(&fn, mod, "gemmSplitMNEpilogueFusedWithSiluKernel")`，确认
+到底是“名字错”“module 没在 handle 里”还是“module ABI 不匹配”。

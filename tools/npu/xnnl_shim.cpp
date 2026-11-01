@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -44,6 +45,10 @@ struct o3xnnl {
     int (*rmsnorm)(xnnlHandle_t, void *, int, xnnlTensorDescriptor_t, const void *,
                    xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, void *, int, float, int);
     int (*set_quant)(xnnlTensorDescriptor_t, bool, bool, const void *, const void *, int, int);
+    int (*set_box)(void *, const unsigned long *, const unsigned long *);
+    int (*add_gemm)(void *, void *, int, void *, void *, void *, void *, void *, void *,
+                    int, int, int, int, int, int, void *, void *, int);
+    int (*get_gemm_name)(std::string &, void *, int, unsigned int, unsigned int);
     int (*matmul)(xnnlHandle_t, void *, xnnlTensorDescriptor_t, const void *,
                   xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, const void *,
                   const void *, const void *, xnnlTensorDescriptor_t, void *,
@@ -92,6 +97,11 @@ static void o3xnnl_force_nol1b(void * matmul_fn) {
     fprintf(stderr, "xnnl_shim: kernel str now = %.40s\n", str);
 }
 
+static int env_i(const char * name, int def) {
+    const char * v = getenv(name);
+    return (v && *v) ? atoi(v) : def;
+}
+
 static int sym(void * lib, const char * name, void ** out) {
     *out = dlsym(lib, name);
     if (!*out) {
@@ -107,11 +117,26 @@ static int make_desc(struct o3xnnl * s, xnnlTensorDescriptor_t * d, const int di
         return -2;
     }
     std::string n(name);
-    int rc = s->set_desc(*d, dims, 4, XNNL_TENSOR_NHWC, XNNL_DATA_HALF, XNNL_MEM_DDR, n);
+    int layout = XNNL_TENSOR_NHWC;
+    int memloc = XNNL_MEM_DDR;
+    const char * me = getenv("O3NPU_DESC_MEM");
+    if (me && *me) memloc = atoi(me);
+    const char * le = getenv("O3NPU_DESC_LAYOUT");
+    if (le && *le) layout = atoi(le);
+    int rc = s->set_desc(*d, dims, 4, layout, XNNL_DATA_HALF, memloc, n);
     if (rc != 0) {
         s->destroy_desc(*d);
         *d = nullptr;
         return -3;
+    }
+    if (getenv("O3NPU_DUMP_DESC")) {
+        unsigned int * q = (unsigned int *) *d;
+        fprintf(stderr, "xnnl_shim: desc %s %p dims:", name, *d);
+        int * dp = (int *) *(void **) *d;
+        for (int i = 0; i < 6; i++) fprintf(stderr, " %d", dp[i]);
+        fprintf(stderr, " |");
+        for (int i = 0; i < 0x28; i++) fprintf(stderr, " %08x", q[i]);
+        fprintf(stderr, "\n");
     }
     return 0;
 }
@@ -123,7 +148,11 @@ int o3xnnl_open(void ** out, void * mida_device) {
     struct o3xnnl * s = new o3xnnl();
     std::memset(s, 0, sizeof *s);
 
-    s->lib = dlopen("/vendor/lib64/libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    const char * xl_env = getenv("O3NPU_XNNL_LIB");
+    if (xl_env) fprintf(stderr, "xnnl_shim: loading %s\n", xl_env);
+    s->lib = xl_env ? dlopen(xl_env, RTLD_NOW | RTLD_GLOBAL) : nullptr;
+    if (!s->lib && xl_env) fprintf(stderr, "xnnl_shim: load failed: %s\n", dlerror());
+    if (!s->lib) s->lib = dlopen("/vendor/lib64/libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
     if (!s->lib) {
         s->lib = dlopen("libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
     }
@@ -145,6 +174,9 @@ int o3xnnl_open(void ** out, void * mida_device) {
         sym(s->lib, "xnnlCreateEpilogueDescriptor", (void **) &s->create_epl) ||
         sym(s->lib, "xnnlSetEpilogueDescriptor", (void **) &s->set_epl) ||
         sym(s->lib, "xnnlSetTensorDescriptorQuantParam", (void **) &s->set_quant) ||
+        sym(s->lib, "xnnlSetTensorDescriptorBoxInfo", (void **) &s->set_box) ||
+        sym(s->lib, "xnnlAddGemmSplitMNKernelNode", (void **) &s->add_gemm) ||
+        sym(s->lib, "xnnlGetGemmSplitMNKernelName", (void **) &s->get_gemm_name) ||
         sym(s->lib, "xnnlMatmulCreateGraph", (void **) &s->matmul)) {
         dlclose(s->lib);
         delete s;
@@ -247,7 +279,9 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
             return -5;
         }
         /* all epilogue features disabled */
-        if ((rc = s->set_epl(epl, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)) != 0) {
+        int epl_act = getenv("O3NPU_EPL_ACT") ? atoi(getenv("O3NPU_EPL_ACT")) : 0;
+        int epl_ew = getenv("O3NPU_EPL_EW") ? atoi(getenv("O3NPU_EPL_EW")) : 0;
+        if ((rc = s->set_epl(epl, 0, 0, epl_act, epl_ew, 0, 0, 0, 0, 0, 0)) != 0) {
             return -6;
         }
     }
@@ -264,6 +298,82 @@ int o3xnnl_matmul_graph(void * handle, void * subgraph,
     if (s->destroy_epl) {
         s->destroy_epl(epl);
     }
+    return rc;
+}
+
+
+struct o3_tensor_box {
+    int tensor_shape[6];   /* +0x00 */
+    int box_start[6];      /* +0x18 */
+    int box_dim[6];        /* +0x30 */
+    int rank;              /* +0x48 */
+    int reserved0;         /* +0x4c */
+    unsigned long long ddr_va;   /* +0x50 */
+    int layout;            /* +0x58 */
+    int dtype;             /* +0x5c */
+    int location;          /* +0x60 */
+    unsigned char flags[4];/* +0x64 */
+    int reserved2;         /* +0x68 */
+    int reserved3;         /* +0x6c */
+    void *scale;           /* +0x70 */
+    int dtype_scale;       /* +0x78 */
+    int reserved4;         /* +0x7c */
+    void *zp;              /* +0x80 */
+    int dtype_zp;          /* +0x88 */
+    int reserved5;         /* +0x8c */
+    int groupwise_cnt;     /* +0x90 */
+    unsigned char tail[0x100];
+};
+
+static void fill_box(o3_tensor_box *b, const int dims[4], void *va) {
+    memset(b, 0, sizeof(*b));
+    unsigned long long n = 1;
+    for (int i = 0; i < 4; i++) {
+        b->tensor_shape[i] = dims[i];
+        b->box_dim[i] = dims[i];
+        b->box_start[i] = 0;
+        n *= (unsigned long long) dims[i];
+    }
+    b->rank = 4;
+    b->layout = 2;         /* XNNL_TENSOR_NHWC */
+    b->dtype = 1;          /* XNNL_DATA_HALF */
+    b->location = 0;       /* XNNL_MEM_DDR */
+    b->ddr_va = (unsigned long long) (unsigned long) va;
+    (void) n;
+}
+
+extern "C" int o3xnnl_gemm_splitmn(void * handle, void * subgraph,
+                        const int in_dims[4], const void * in_ptr,
+                        const int w_dims[4], const void * w_ptr,
+                        const int out_dims[4], void * out_ptr,
+                        int transposed_w, void * wscale, int nscale) {
+    struct o3xnnl * s = (struct o3xnnl *) handle;
+    if (!s || !subgraph || !s->add_gemm) return -1;
+    o3_tensor_box bi, bw, bo;
+    fill_box(&bi, in_dims, (void *) in_ptr);
+    fill_box(&bw, w_dims, (void *) w_ptr);
+    fill_box(&bo, out_dims, out_ptr);
+    (void) wscale; (void) nscale;
+    int p3  = env_i("O3NPU_GEMM_PARAM3", 2);
+    int p10 = env_i("O3NPU_GEMM_PARAM10", 5);
+    int p18 = env_i("O3NPU_GEMM_PARAM18", 2);
+    int rc = s->add_gemm(s->handle, subgraph, p3, &bi, &bw, 0, 0, 0, &bo,
+                         p10, 1, 0, transposed_w ? 1 : 0, 0, 0, nullptr, nullptr, p18);
+    fprintf(stderr, "xnnl_shim: addGemmSplitMN(box, p3=%d p10=%d p18=%d) -> %d\n",
+            p3, p10, p18, rc);
+    return rc;
+}
+
+extern "C" int o3xnnl_gemm_name(void * handle, const int out_dims[4], void * out_ptr,
+                                int act, int all_head_num, int flags) {
+    struct o3xnnl * s = (struct o3xnnl *) handle;
+    if (!s || !s->get_gemm_name) return -1;
+    o3_tensor_box bo;
+    fill_box(&bo, out_dims, out_ptr);
+    std::string name;
+    int rc = s->get_gemm_name(name, &bo, act, (unsigned) all_head_num, (unsigned) flags);
+    fprintf(stderr, "xnnl_shim: gemm_name(act=%d allhead=%d flags=%d) -> %d name='%s'\n",
+            act, all_head_num, flags, rc, name.c_str());
     return rc;
 }
 

@@ -23,6 +23,13 @@ extern int  o3xnnl_unary(void * handle, void * subgraph, const char * name,
                          int n, const void * x, void * y);
 extern int  o3xnnl_rmsnorm(void * handle, void * subgraph, int K,
                            const void * x, const void * w, void * y);
+extern int  o3xnnl_gemm_splitmn(void * handle, void * subgraph,
+                                const int in_dims[4], const void * in_ptr,
+                                const int w_dims[4], const void * w_ptr,
+                                const int out_dims[4], void * out_ptr,
+                                int transposed_w, void * wscale, int nscale);
+extern int  o3xnnl_gemm_name(void * handle, const int out_dims[4], void * out_ptr,
+                             int act, int all_head_num, int flags);
 extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
                                 const int in_dims[4], const void * in_ptr,
                                 const int w_dims[4], const void * w_ptr,
@@ -84,7 +91,7 @@ struct mida_api {
     int  (*device_set_limit)(int, uint32_t, midaDevice_t);
     int  (*sub_set_dma_split)(midaSubgraph_t, uint32_t);
     int  (*module_load)(void **, midaDevice_t, const void *, uint32_t);
-    int  (*module_get_func)(void *, const char *, void **);
+    int  (*module_get_func)(void **, void *, const char *);
 
     int  (*mem_alloc)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *);
     int  (*mem_free)(midaMemory_t);
@@ -160,7 +167,7 @@ static struct mida_api * mida_get(void) {
     a->device_set_limit = (int (*)(int, uint32_t, midaDevice_t)) dlsym(a->lib, "midaDeviceSetLimit");
     a->sub_set_dma_split = (int (*)(midaSubgraph_t, uint32_t)) dlsym(a->lib, "midaSubgraphSetDMASplitMode");
     a->module_load = (int (*)(void **, midaDevice_t, const void *, uint32_t)) dlsym(a->lib, "midaModuleLoadData");
-    a->module_get_func = (int (*)(void *, const char *, void **)) dlsym(a->lib, "midaModuleGetFunction");
+    a->module_get_func = (int (*)(void **, void *, const char *)) dlsym(a->lib, "midaModuleGetFunction");
 
     a->mem_alloc     = (int (*)(midaMemory_t *, midaDevice_t, uint64_t, uint32_t, uint32_t, const char *)) need_sym(a->lib, "midaMemoryAlloc");
     a->mem_free      = (int (*)(midaMemory_t)) need_sym(a->lib, "midaMemoryFree");
@@ -641,11 +648,19 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         }
     }
 
+    if (getenv("O3NPU_GEMM") && *getenv("O3NPU_GEMM") == '1') {
+        rc = o3xnnl_gemm_splitmn(m->xnnl, sub,
+                                 in_dims, (const void *) m->in.va,
+                                 w_dims,  (const void *) m->w.va,
+                                 out_dims, (void *) m->out.va,
+                                 m->transposed_w, wscale_ptr, nscale);
+    } else {
     rc = o3xnnl_matmul_graph(m->xnnl, sub,
                              in_dims, (const void *) m->in.va,
                              w_dims,  (const void *) m->w.va,
                              out_dims, (void *) m->out.va,
                              m->transposed_w, wscale_ptr, nscale);
+    }
     if (rc != 0) {
         snprintf(m->err, sizeof m->err, "xnnlMatmulCreateGraph -> %d", rc);
         a->sub_destroy(sub);
@@ -1111,10 +1126,12 @@ int o3npu_funcs(void) {
     if (!a || !a->module_load || !a->module_get_func) { printf("no module funcs\n"); return -1; }
     void * xl = dlopen("/vendor/lib64/libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
     if (!xl) xl = dlopen("libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) { printf("dlopen libxnnl failed\n"); return -1; }
+    int (*cnt)(int *) = (int (*)(int *)) dlsym(xl, "xnnlGetDiscreteElfCount");
     int (*nm)(unsigned int, char **) = (int (*)(unsigned int, char **)) dlsym(xl, "xnnlGetDiscreteElfName");
     int (*dat)(unsigned int, void **) = (int (*)(unsigned int, void **)) dlsym(xl, "xnnlGetDiscreteElfData");
     int (*sz)(unsigned int, size_t *) = (int (*)(unsigned int, size_t *)) dlsym(xl, "xnnlGetDiscreteElfSize");
-    if (!nm || !dat || !sz) { printf("missing getters\n"); return -1; }
+    if (!cnt || !nm || !dat || !sz) { printf("missing getters\n"); return -1; }
 
     midaDeviceConfig cfg;
     fill_devcfg(&cfg);
@@ -1122,29 +1139,61 @@ int o3npu_funcs(void) {
     int rc = a->device_get(&dev, 0, &cfg);
     if (rc != 0 || !dev) { printf("device -> %d\n", rc); return -2; }
 
-    struct { int idx; const char ** names; int n; } jobs[2];
-    const char * mm[] = { "MatmulOpPerChnSplitKernelL1B", "MatmulOpPerChnSplitKernel",
-                          "MatmulOpKernelSpecializedN" };
-    const char * rms[] = { "RMSNormalizationHalf_BlockReduce_TMA_L2B",
-                           "RMSNormalizationHalf_BlockReduce_TMA" };
-    jobs[0].idx = 39; jobs[0].names = mm;  jobs[0].n = 3;
-    jobs[1].idx = 44; jobs[1].names = rms; jobs[1].n = 2;
-
-    for (int j = 0; j < 2; j++) {
+    static const char * names[] = {
+        "gemmSplitMNEpilogueFusedKernel",
+        "gemmSplitMNEpilogueFusedWithSiluKernel",
+        "gemmSplitMNEpilogueFusedWithGwKernel",
+        "llmGemmSplitMNWithHeadTransposeKernel",
+        "llmGemmSplitMNWithSilu",
+        "llmGemmSplitMNWithSwigluKernel",
+        "llmGemmSplitMNWithGelu",
+        "llmGemmSplitMNKernel_ViTPostAttn",
+        "MatmulOpPerChnSplitKernelL1B",
+        "MatmulOpPerChnSplitKernel",
+        "MatmulOpKernelSpecializedN",
+        "RMSNormalizationHalf_BlockReduce_TMA_L2B",
+    };
+    int n = 0;
+    cnt(&n);
+    printf("modules: %d\n", n);
+    for (int i = 0; i < n; i++) {
         char * mname = NULL; void * data = NULL; size_t size = 0;
-        nm((unsigned) jobs[j].idx, &mname);
-        dat((unsigned) jobs[j].idx, &data);
-        sz((unsigned) jobs[j].idx, &size);
+        nm((unsigned) i, &mname);
+        dat((unsigned) i, &data);
+        sz((unsigned) i, &size);
         void * mod = NULL;
         int lr = a->module_load(&mod, dev, data, (uint32_t) size);
-        printf("module[%d] %s load=%d mod=%p\n", jobs[j].idx, mname ? mname : "?", lr, mod);
-        for (int i = 0; i < jobs[j].n; i++) {
+        printf("module[%02d] load=%d mod=%p size=%zu name=%s\n",
+               i, lr, mod, size, mname ? mname : "?");
+        if (lr != 0) continue;
+        for (size_t j = 0; j < sizeof(names) / sizeof(names[0]); j++) {
             void * fn = NULL;
-            int fr = a->module_get_func(mod, jobs[j].names[i], &fn);
-            printf("  func %-45s -> %d fn=%p\n", jobs[j].names[i], fr, fn);
+            int fr = a->module_get_func(&fn, mod, names[j]);
+            if (fr == 0 || strstr(names[j], "gemmSplitMN") || strstr(names[j], "llmGemm")) {
+                printf("  func %-48s -> %d fn=%p\n", names[j], fr, fn);
+            }
         }
     }
     return 0;
+}
+
+int o3npu_gemm_name(void) {
+    o3npu_matmul_t * m = o3npu_matmul_open();
+    if (!m) { printf("open failed\n"); return -1; }
+    int K = env_int("O3NPU_NAME_K", 576);
+    int M = env_int("O3NPU_NAME_M", 576);
+    int T = env_int("O3NPU_NAME_T", 1);
+    int in_dims[4]  = { 1, 1, 1, K };
+    int w_dims[4]   = { 1, 1, K, M };
+    int out_dims[4] = { T, 1, 1, M };
+    int act = env_int("O3NPU_GEMM_ACT", 5);
+    int allhead = env_int("O3NPU_GEMM_ALLHEAD", 1);
+    int flags = env_int("O3NPU_GEMM_FLAGS", 0);
+    (void) in_dims; (void) w_dims;
+    int rc = o3xnnl_gemm_name(m->xnnl, out_dims, NULL, act, allhead, flags);
+    printf("gemm_name rc=%d act=%d allhead=%d flags=%d\n", rc, act, allhead, flags);
+    o3npu_matmul_close(m);
+    return rc;
 }
 
 /* exposed for the host unit test only */

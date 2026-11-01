@@ -75,34 +75,47 @@ param18 = 2
 transB  = 1
 ```
 
-当前 shim 传的是 `param3=0, param10=0, param18=2`，至少前三项没有严格对齐。
-在 `xnnl_shim.cpp` 增加：
+当前 shim 已改为默认 `param3=2, param10=5, param18=2`，并支持环境变量覆盖：
 
 ```
-O3NPU_GEMM_PARAM3 / O3NPU_GEMM_PARAM10 / O3NPU_GEMM_PARAM18 / O3NPU_GEMM_ACT
+O3NPU_GEMM_PARAM3 / O3NPU_GEMM_PARAM10 / O3NPU_GEMM_PARAM18
+O3NPU_GEMM_ACT / O3NPU_GEMM_ALLHEAD / O3NPU_GEMM_FLAGS
 ```
 
-并打印 `xnnlGetGemmSplitMNKernelName` 的返回值。
+`o3xnnl_gemm_name` 会调用 `xnnlGetGemmSplitMNKernelName` 并打印返回字符串。
+该符号是 `getKernelName(std::string&, xnnlTensorBox*, xnnlActivationType_t,
+unsigned int, bool, unsigned int)` 的公开包装（libxnnl `0x667400`）。
 
-### A4. 扩展探针
+### A4. 扩展探针（已实现）
 
-`tools/npu/o3npu.c` 现有 `--modules` / `--funcs` 只覆盖 `module[39]` / `module[44]`。
-增加：
+`tools/npu/o3npu.c` 现有 `--modules` / `--funcs` 已改成覆盖全部模块：
 
-- `--modules-gemm`：遍历全部 `xnnlGetDiscreteElfName`，打印 index/name/size/load；
-- `--funcs-gemm`：对包含 GemmSplitMN 的 module 调 `midaModuleGetFunction`，测试：
+- `--modules`：遍历全部 `xnnlGetDiscreteElfName`，打印 index/name/size/load；
+- `--funcs`：对每个模块调 `midaModuleGetFunction`，测试：
   - `gemmSplitMNEpilogueFusedKernel`
   - `gemmSplitMNEpilogueFusedWithSiluKernel`
   - `gemmSplitMNEpilogueFusedWithGwKernel`
+  - `llmGemmSplitMNWithHeadTransposeKernel`
+  - `llmGemmSplitMNWithSilu` / `llmGemmSplitMNWithSwigluKernel` / `llmGemmSplitMNWithGelu`
   - `llmGemmSplitMNKernel_ViTPostAttn`
 - `--gemm-name`：用最小参数调 `xnnlGetGemmSplitMNKernelName`，打印返回字符串。
+
+**重要修正**：`midaModuleGetFunction` 的真实签名是
+
+```c
+int midaModuleGetFunction(void **out, void *module, const char *name);
+```
+
+不是之前的 `(module, name, out)`。依据：`libxnumd.so:0x92344` 的反汇编，以及
+`xnnlUmdWrapper::GetFunction` 在 `0x576840` 的调用方式（x0=out, x1=module, x2=name）。
+这个顺序弄反会让 `--funcs` 直接失败或崩溃，也是之前 `--funcs` 被禁用的原因。
 
 ## 3. 设备实验（一次启动只测一个变量）
 
 按顺序执行，任何一步失败就停在该层：
 
-1. **E1 模块表**：`--modules-gemm`，确认 gemm module 的 index/name/load=0。
-2. **E2 函数查找**：`--funcs-gemm`，看 `midaModuleGetFunction` 能否拿到精确 name 的 fn 指针。
+1. **E1 模块表**：`--modules`，确认 gemm module 的 index/name/load=0。
+2. **E2 函数查找**：`--funcs`，看 `midaModuleGetFunction` 能否拿到精确 name 的 fn 指针。
    - 失败 → H2/H3；
    - 成功 → H1（问题在 xnnl 层的 name/调用）。
 3. **E3 name 对齐**：`--gemm-name` 用厂商参数（param3=2/param10=5/param18=2/transB=1）
@@ -136,9 +149,12 @@ E4 成功但 E5 失败
 3. 或转 NBG / `Xnn_Engine` 预编译模型；
 4. ggml backend 保持 CPU 回退，不把未验证的 NPU 路径当默认。
 
-## 6. 交付物
+## 6. 交付物与进度
 
 - `docs/NPU-GEMM-VENDOR-PATH.md` 的“缺 module”结论已修正；
-- 新增 `tools/npu/probe_gemm_splitmn.c` 或扩展 `o3npu.c` 的 `--modules-gemm` / `--funcs-gemm`；
+- `tools/npu/xnnl_shim.cpp` 已加入 `O3NPU_GEMM_PARAM*`、`o3xnnl_gemm_name`；
+- `tools/npu/o3npu.c` 已把 `--modules` / `--funcs` 扩展到全模块，并修正 `midaModuleGetFunction` 参数顺序；
+- `tools/probe/probe_npu_matmul.cpp` 已启用 `--funcs`、新增 `--gemm-name`；
+- 构建验证：`tools/probe/build.sh /tmp/probe_npu_matmul_p0` 通过（arm64 Android）；
 - 设备实验记录写入 `artifacts/probe-logs/`，每个实验只保留一个变量；
-- 最终以“能否在第三方进程里拿到 `gemmSplitMNEpilogueFusedKernel` 的 fn 指针”为Go/No-Go 判据。
+- 最终以“能否在第三方进程里拿到 `gemmSplitMNEpilogueFusedKernel` 的 fn 指针”为 Go/No-Go 判据。
