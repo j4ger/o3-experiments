@@ -125,6 +125,19 @@ int midaModuleGetFunction(void **out, void *module, const char *name);
 `xnnlUmdWrapper::GetFunction` 在 `0x576840` 的调用方式（x0=out, x1=module, x2=name）。
 这个顺序弄反会让 `--funcs` 直接失败或崩溃，也是之前 `--funcs` 被禁用的原因。
 
+### A5. L2B/分配节点的离线确认（2026-11-01）
+
+反编译 `xnnlLlmDecodeFfnLayer::addAllocNodes`（Ghidra 地址 `0x7d3bb4`，对应
+nm `0x6d3bb4`）确认它只做 **8 个 `GraphManager::addAllocNode`**，参数来自
+`this+0x2a8`（子图）和 `this+0x2d0` 的大小表，覆盖 FFN 的 gate/up/down 与
+中间 buffer；它不是 `GemmSplitMNImpl` 自己的一部分，而是 `xnnlLlmDecodeFfnLayer`
+图构建的外围节点。
+
+`xnnlUmdWrapper::AddL2bReadNode`（`0x675a38` / nm `0x575a38`）本身只是
+`[this+0x40](out, subgraph, queue, midaRWL2BNodeParams*)` 的薄包装。结论：
+standalone `xnnlAddGemmSplitMNKernelNode` 不带这些 FFN L2B 节点是正常的；
+当前优先验证的是输出 cache invalidate 顺序，而不是先补 L2B 图。
+
 ## 3. 设备实验（一次启动只测一个变量）
 
 按顺序执行，任何一步失败就停在该层：
