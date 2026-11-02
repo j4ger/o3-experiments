@@ -115,6 +115,8 @@ struct mida_api {
     int  (*sub_print_info)(midaSubgraph_t);
     int  (*sub_exec_print_info)(midaSubgraphExec_t);
     int  (*sub_exec_dump)(midaSubgraphExec_t, const char *);
+    int  (*sub_exec_vis)(midaSubgraphExec_t, char *);
+    int  (*sub_add_barrier)(midaSubgraphNode_t *, midaSubgraph_t, uint32_t, void *);
 
     int  (*stream_create)(midaStream_t *, midaDevice_t, midaStreamConfig *);
     int  (*stream_destroy)(midaStream_t);
@@ -191,6 +193,8 @@ static struct mida_api * mida_get(void) {
     a->sub_print_info = (int (*)(midaSubgraph_t)) dlsym(a->lib, "midaSubgraphPrintInfo");
     a->sub_exec_print_info = (int (*)(midaSubgraphExec_t)) dlsym(a->lib, "midaSubgraphExecPrintInfo");
     a->sub_exec_dump = (int (*)(midaSubgraphExec_t, const char *)) dlsym(a->lib, "midaSubgraphExecDumpDataToFile");
+    a->sub_exec_vis = (int (*)(midaSubgraphExec_t, char *)) dlsym(a->lib, "midaSubgraphExecToVisualize");
+    a->sub_add_barrier = (int (*)(midaSubgraphNode_t *, midaSubgraph_t, uint32_t, void *)) dlsym(a->lib, "midaSubgraphAddBarrierNode");
 
     a->stream_create = (int (*)(midaStream_t *, midaDevice_t, midaStreamConfig *)) need_sym(a->lib, "midaStreamCreate");
     a->stream_destroy= (int (*)(midaStream_t)) need_sym(a->lib, "midaStreamDestroy");
@@ -609,7 +613,12 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     dbuf_sync_dev(a, &m->w);
 
     dbuf_sync_cpu(a, &m->out);
-    memset(m->out.cpu, 0, (size_t) M * T * 2);
+    if (env_int("O3NPU_OUT_PATTERN", 0)) {
+        uint16_t * po = (uint16_t *) m->out.cpu;
+        for (size_t i = 0, n = (size_t) M * T; i < n; i++) po[i] = 0x3C00;
+    } else {
+        memset(m->out.cpu, 0, (size_t) M * T * 2);
+    }
     dbuf_sync_dev(a, &m->out);
 
     midaSubgraphConfig subcfg;
@@ -665,6 +674,22 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         snprintf(m->err, sizeof m->err, "xnnlMatmulCreateGraph -> %d", rc);
         a->sub_destroy(sub);
         return -4;
+    }
+
+    /* GemmSplitMN's xnnl binding only adds the kernel node.  RMSNorm's
+     * working graph also has a Barrier(mode=1) after the kernel; add it
+     * after the kernel so the barrier's implicit dependency is the kernel. */
+    if (env_int("O3NPU_BARRIER", 0) && a->sub_add_barrier) {
+        midaSubgraphNode_t bar = NULL;
+        uint32_t mode = 1;
+        int br = a->sub_add_barrier(&bar, sub, 0, &mode);
+        if (m->trace) printf("o3npu: addBarrier after kernel -> %d node=%p mode=%u\n",
+                             br, bar, mode);
+        if (br != 0) {
+            snprintf(m->err, sizeof m->err, "midaSubgraphAddBarrierNode -> %d", br);
+            a->sub_destroy(sub);
+            return -4;
+        }
     }
 
     const char * path_mode = getenv("O3NPU_PATH");
@@ -815,6 +840,12 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
             printf("o3npu: dump %s -> %d\n", dump, a->sub_exec_dump(exec, dump));
         }
     }
+    if (a->sub_exec_vis) {
+        const char * vis = getenv("O3NPU_VIS");
+        if (vis && *vis) {
+            printf("o3npu: vis %s -> %d\n", vis, a->sub_exec_vis(exec, (char *) vis));
+        }
+    }
 
     midaLaunchConfig lc;
     memset(&lc, 0, sizeof lc);
@@ -921,6 +952,10 @@ int o3npu_rmsnorm_test(int K, int trace) {
     memset(&si, 0, sizeof si);
     int sr = a->sub_exec_stack_info ? a->sub_exec_stack_info(ex, &si) : -1;
     printf("rmsnorm stack_info -> %d size=%llu\n", sr, (unsigned long long) si.stack_size);
+    if (a->sub_exec_vis) {
+        const char * vis = getenv("O3NPU_VIS");
+        if (vis && *vis) printf("rmsnorm vis %s -> %d\n", vis, a->sub_exec_vis(ex, (char *) vis));
+    }
 
     midaLaunchConfig lc;
     memset(&lc, 0, sizeof lc);

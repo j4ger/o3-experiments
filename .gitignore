@@ -11,6 +11,8 @@ artifacts/
 
 # build outputs
 **/build/
+/result
+/result-*
 *.apk
 *.idsig
 *.so.tmp

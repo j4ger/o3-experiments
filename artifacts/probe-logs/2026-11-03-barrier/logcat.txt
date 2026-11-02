@@ -1,0 +1,28 @@
+--------- beginning of main
+11-03 01:57:39.485  2208  2952 I libsensor-calapi: lhasa_apply_custom_filter: preLux=167.235306, lux=167.235306
+11-03 01:57:39.608  3156  3159 D WifiHAL : WifiRequest::create vendor command to iface 15, vendor_id=0x1a11, subcmd=0x1200, buffer_size=0, res=0
+11-03 01:57:39.611  3156  3159 I WifiHAL : GetLinkStatsCommand: handleResponse: data=0xb40000736fc05030, len=4596
+11-03 01:57:39.611  3156  3159 I WifiHAL : GetLinkStatsCommand: check_data_sanity: current_radio_stat->num_channels=13
+11-03 01:57:39.611  3156  3159 I WifiHAL : GetLinkStatsCommand: check_data_sanity: current_radio_stat->num_channels=13
+11-03 01:57:39.611  3156  3159 I WifiHAL : GetLinkStatsCommand: check_data_sanity: confirmed_size=4596, len=4596
+--------- beginning of system
+11-03 01:57:39.613  2511  4849 D NetworkAccelerateSwitchService: getAverageWifiRssi:45
+11-03 01:57:39.677  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4549.000000 front_lux 166.183350 event 33171288 target_lux 166.183350 target_cct 4549.000000
+11-03 01:57:39.677  1799  1799 D TRUETONE: sensorCallback Cct value=<4549.0000>  mLastCCT 6300.000000 mTargetCCT 6300.000000
+11-03 01:57:39.677  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4549.000000 front_lux 166.183350 event 33171288 target_lux 166.183350 target_cct 4549.000000
+11-03 01:57:39.677  1799  1799 D TRUETONE: sensorCallback Cct value=<4549.0000>  mLastCCT 6300.000000 mTargetCCT 6300.000000
+11-03 01:57:39.683  2224  2224 I adbd    : adbd service requested 'shell,v2,TERM=dumb,raw:/data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; O3NPU_MEM_FLAG=5 O3NPU_OUT_PATTERN=1 O3NPU_TRACE=1 O3NPU_BARRIER=1 O3NPU_VIS=/data/local/tmp/gemm_barrier.dot O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=0 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2 O3NPU_TRANSPOSED_W=1 ./probe_npu_matmul_nix --k 576 --m 576 --t 1 2>&1''
+11-03 01:57:39.683  2224  2224 I adbd    : in ShellService: /data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; O3NPU_MEM_FLAG=5 O3NPU_OUT_PATTERN=1 O3NPU_TRACE=1 O3NPU_BARRIER=1 O3NPU_VIS=/data/local/tmp/gemm_barrier.dot O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=0 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2 O3NPU_TRANSPOSED_W=1 ./probe_npu_matmul_nix --k 576 --m 576 --t 1 2>&1'
+11-03 01:57:39.706 25839 25839 W libc    : Access denied finding property "persist.vendor.track.malloc.enable"
+11-03 01:57:39.706 25839 25839 W libc    : Access denied finding property "persist.vendor.fd.monitor.enable"
+11-03 01:57:39.707 25839 25839 W libc    : Access denied finding property "ro.vendor.net.upload.mark.default"
+11-03 01:57:39.737 25841 25841 W libc    : Access denied finding property "persist.vendor.track.malloc.enable"
+11-03 01:57:39.737 25841 25841 W libc    : Access denied finding property "persist.vendor.fd.monitor.enable"
+11-03 01:57:39.741 25841 25841 W libc    : Access denied finding property "ro.vendor.net.upload.mark.default"
+11-03 01:57:39.741 25841 25841 I kernel_runtime: [device_impl.cpp:211]:>>>>>>>>>>>>>>>>>>> NPU UMD Version: 0.7.13 Date:Oct 12 2026 10:37:15<<<<<<<<<<<<<<<<<<<
+11-03 01:57:39.767 25841 25841 W kernel_runtime: [module_impl.cpp:428]:module no kernel
+11-03 01:57:39.778 25841 25841 I [XNNL]: : [handle.cpp:81]:Created handle with 64 discrete ELF modules
+11-03 01:57:39.792 25841 25841 W kernel_runtime: [subgraphexec_impl.cpp:4253]:stack mem is null
+11-03 01:57:39.833  2224  2224 I adbd    : adbd service requested 'shell,v2,TERM=dumb:export ANDROID_LOG_TAGS=''; exec logcat '-b' 'all' '-d''
+11-03 01:57:39.833  2224  2224 I adbd    : in ShellService: export ANDROID_LOG_TAGS=''; exec logcat '-b' 'all' '-d'
+11-03 01:57:39.857 25843 25843 W libc    : Access denied finding property "ro.vendor.net.upload.mark.default"
