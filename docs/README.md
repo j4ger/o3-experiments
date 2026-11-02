@@ -7,6 +7,7 @@
 | [NPU-GEMM-VENDOR-PATH.md](NPU-GEMM-VENDOR-PATH.md) | vendor LLM's GemmSplitMN path, recovered structs, and the corrected kernel-module finding |
 | [NPU-GEMM-NEXT.md](NPU-GEMM-NEXT.md) | GemmSplitMN hypotheses, offline analysis plan, device experiment order, and Go/No-Go gates |
 | [DEVICE-EXTRACTION.md](DEVICE-EXTRACTION.md) | device-side NPU library/config/evidence extraction manifest and permission boundaries |
+| [OFFLINE-READINESS.md](OFFLINE-READINESS.md) | recovered reorder/L2B signatures, probe switches, and single-variable device plan |
 | [ROOT-CHAIN.md](ROOT-CHAIN.md) | how the temporary root works, how it is wired into the app, risks and cleanup |
 | [KERNELSU-NOTES.md](KERNELSU-NOTES.md) | why a uid-0 process still cannot write, and how KernelSU's own su differs |
 | [GGML-BACKEND.md](GGML-BACKEND.md) | the llama.cpp backend, CPU baseline, offline vs on-device split |
