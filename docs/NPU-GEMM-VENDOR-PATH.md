@@ -302,4 +302,12 @@ K=576 M=576 T=1 max|NPU-CPU|=24.4512 MISMATCH
 - 离线复核又发现探针读回顺序错误：`o3npu_matmul_run` 在 `stream_sync` 后用
   `dbuf_sync_cpu`（`midaMemoryCacheStart`）读输出，而 RMSNorm/unary 探针是先用
   `mem_cache_end` invalidate 再读。已改为读前 `dbuf_sync_dev`、读后
-  `dbuf_sync_cpu`，构建通过，待设备复测。
+  `dbuf_sync_cpu`，构建通过。
+- 设备复测 cache 修复：RMSNorm 仍数值正确（0/576 mismatch），说明读回路径没问题；
+  GemmSplitMN 输出仍为预填 `1.0` pattern。
+- 对照 RMSNorm DOT 发现 GemmSplitMN 少 Barrier；在 kernel 后添加
+  `midaSubgraphAddBarrierNode(mode=1, queue 0)` 后，DOT 变为
+  `1 queue, total node 2` / `Barrier_1_0 <- @Kernel_0_0:out0`，与 RMSNorm 一致，
+  但输出仍为 `1.0` pattern。
+- 下一步优先确认权重是否必须先经 `xnnlGemmSplitMNKernelReorder`；
+  其次是 `weightL1bBytes_` / L2B 读写节点和 `stack mem is null`。

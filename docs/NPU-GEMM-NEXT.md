@@ -159,14 +159,24 @@ standalone `xnnlAddGemmSplitMNKernelNode` 不带这些 FFN L2B 节点是正常�
 4. **E4 node 构建**：用厂商参数调 `xnnlAddGemmSplitMNKernelNode`；若仍 status=11，
    用 `LD_PRELOAD` 包一层 `midaModuleGetFunction`，记录 module handle、name、返回值。
 5. **E5 输出为零（当前卡点）**：node 已构建成功并 instantiate/launch/sync 0，但输出全 0。
-   离线复核发现 `o3npu_matmul_run` 读回顺序错了：它在读 NPU 输出前调用
-   `dbuf_sync_cpu`（`midaMemoryCacheStart`），而 RMSNorm/unary 探针在同步后是
-   先调用 `mem_cache_end` 再读。已改为读前 `dbuf_sync_dev`（invalidate），读后
-   `dbuf_sync_cpu`；重新构建通过，待设备复测。
-   若复测仍为 0，再查 `weightL1bBytes_=294912 > sharedMemBytes_=131072`、
-   `stack mem is null`，以及厂商 `xnnlLlmDecodeFfnLayer::addAllocNodes` /
-   `AddL2bReadNode` 的图构建步骤；之后再处理
-   `xnnlGemmSplitMNKernelReorder` / `GemmSplitMNKernelParaStorage`。
+   复测结果：
+
+   - cache 读回顺序已修正（读前 `dbuf_sync_dev`、读后 `dbuf_sync_cpu`），
+     RMSNorm 仍然数值正确；GemmSplitMN 输出仍为预填的 `1.0` pattern，
+     说明不是 cache 读回问题。
+   - 对比 RMSNorm DOT 发现 GemmSplitMN 少 Barrier 节点；已在 kernel 后
+     `midaSubgraphAddBarrierNode(mode=1, queue 0)`，DOT 变为
+     `1 queue, total node 2`，`Barrier_1_0` 输入 `@Kernel_0_0:out0`，
+     与 RMSNorm 结构一致。
+   - 但输出仍为 `1.0` pattern，所以 Barrier 只是补齐了图结构，
+     kernel 本身仍未写回。
+
+   下一层按优先级：
+
+   1. `xnnlGemmSplitMNKernelReorder`：权重是否必须先经过 splitMN 重排；
+   2. `weightL1bBytes_=294912 > sharedMemBytes_=131072` 对应的 L2B 读写节点；
+   3. `stack mem is null` 是否意味着 GemmSplitMN 需要显式 kernel stack。
+   之后再处理 `GemmSplitMNKernelParaStorage`。
 
 ## 4. 判定树
 
