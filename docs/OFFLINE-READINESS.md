@@ -122,10 +122,11 @@ O3NPU_TRANSPOSED_W=1
 | `O3NPU_STACK=256K/1M/4M` | 输出仍为 pattern |
 | `O3NPU_DMASPLIT=0/1/2` | 输出仍为 pattern；=3 segfault |
 | `O3NPU_TRANSPOSED_W=0` | 输出仍为 pattern |
+| `O3NPU_CU=1/2/3/4` | 输出仍为 pattern |
 | `O3NPU_L2BALLOC=1` + `O3NPU_L2B=8M` | segfault |
 
-结论：L2B pool 大小、subgraph l2bSize、kernel stack、DMA split、weight transposed
-都不是“kernel 不写回”的开关。下一步必须回到离线，恢复
+结论：L2B pool 大小、subgraph l2bSize、kernel stack、DMA split、weight transposed、
+CU 数量都不是“kernel 不写回”的开关。下一步必须回到离线，恢复
 `AllocL2BNodeExecImpl::PrepareAllocFreeL2B` 和 `ReadL2BNodeExecImpl::PrepareRWDMA`
 的完整参数语义，再决定是否补 L2B 读写节点。
 
