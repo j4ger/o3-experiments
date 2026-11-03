@@ -182,13 +182,15 @@ standalone `xnnlAddGemmSplitMNKernelNode` 不带这些 FFN L2B 节点是正常�
 
    下一层按优先级：
 
-   1. 离线恢复 `midaAllocFreeL2BNodeParams` / `midaRWL2BNodeParams` 的完整字段表
+   1. **epilogue reorder**：`--gemm-reorder-size` 实测返回 0，
+      `sdpSize=192`、`gwScaleSize=0`（`act=5 trans=1 cfg=2`）。
+      说明当前配置确实需要 192 字节 reorder 数据；需要确认它如何经
+      `xnnlAddGemmSplitMNKernelNode` 的 `param_16` / `param_17` 传入 kernel。
+   2. 离线恢复 `midaAllocFreeL2BNodeParams` / `midaRWL2BNodeParams` 完整字段表
       与 `PrepareAllocFreeL2B` / `PrepareRWDMA` 参数语义；
-   2. 确认 `weightL1bBytes_=294912 > sharedMemBytes_=131072` 是否需要
+   3. `weightL1bBytes_=294912 > sharedMemBytes_=131072` 是否需要
       L2B alloc + read 节点；
-   3. `stack mem is null` 暂不作为主假设（显式 stack 已试过，无变化）。
-   `xnnlGemmSplitMNKernelReorder` 已恢复签名，但当前 `sdpBlkSize=0`、
-   `groupwiseCnt=0`，优先级下调。
+   4. `stack mem is null` 暂不作为主假设（显式 stack 已试过，无变化）。
 
 ## 4. 判定树
 

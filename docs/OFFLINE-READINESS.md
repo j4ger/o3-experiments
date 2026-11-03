@@ -50,9 +50,23 @@ transposedW=1 actOp=5 gemmK=576 gemmN=576 configType=2
 sdpBlkSize=0, gwqSmemBytes=0, groupwiseCnt=0
 ```
 
-`xnnlGemmSplitMNKernelReorder` 实际只在 `sdpBlkSize>0` 或 `groupwiseCnt>0` 时
-调用 `xnnlSdpDataReorder` / `xnnlGroupwiseScaleReorder`。当前 shape 两者都是 0，
-所以**权重 reorder 不是当前输出为 0 的原因**，上机优先级应低于 L2B/stack。
+2026-11-04 实测修正：
+
+```text
+xnnlGetGemmSplitMNKernelReorderSize(in, w, nullptr, out, &sdp, &gw,
+                                    act=5, trans=1, cfg=2) -> 0
+sdpSize=192, gwScaleSize=0
+```
+
+- `param_3` 不是 output；`param_4` 才是 output box。传反了会报
+  `output_ == nullptr`。
+- 当前配置 **确实需要** 192 字节的 SDP/epilogue reorder 数据，即使
+  `sdpBlkSize=0`、`groupwiseCnt=0`。
+- 所以 `xnnlGemmSplitMNKernelReorder` 不再是低优先级；它可能是 kernel
+  不写回的直接原因：reorder 数据没有准备好，也没有通过
+  `xnnlAddGemmSplitMNKernelNode` 的 `param_16` / `param_17` 传给 kernel。
+- 下一步离线任务：反汇编 `xnnlAddGemmSplitMNKernelNode` 与
+  `GemmSplitMNImpl::addKernel`，确认 192 字节 reorder 缓冲应该如何传入。
 
 ## 3. L2B 参数结构（libxnumd 反汇编）
 

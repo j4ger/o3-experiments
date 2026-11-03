@@ -30,6 +30,11 @@ extern int  o3xnnl_gemm_splitmn(void * handle, void * subgraph,
                                 int transposed_w, void * wscale, int nscale);
 extern int  o3xnnl_gemm_name(void * handle, const int out_dims[4], void * out_ptr,
                              int act, int all_head_num, int flags);
+extern int  o3xnnl_gemm_reorder_size(void * handle,
+                                     const int in_dims[4], const void * in_ptr,
+                                     const int w_dims[4], const void * w_ptr,
+                                     const int out_dims[4], void * out_ptr,
+                                     int act, int transposed, int config);
 extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
                                 const int in_dims[4], const void * in_ptr,
                                 const int w_dims[4], const void * w_ptr,
@@ -1229,6 +1234,31 @@ int o3npu_gemm_name(void) {
     (void) in_dims; (void) w_dims;
     int rc = o3xnnl_gemm_name(m->xnnl, out_dims, NULL, act, allhead, flags);
     printf("gemm_name rc=%d act=%d allhead=%d flags=%d\n", rc, act, allhead, flags);
+    o3npu_matmul_close(m);
+    return rc;
+}
+
+int o3npu_gemm_reorder_size(void) {
+    o3npu_matmul_t * m = o3npu_matmul_open();
+    if (!m) { printf("open failed\n"); return -1; }
+    int K = env_int("O3NPU_NAME_K", 576);
+    int M = env_int("O3NPU_NAME_M", 576);
+    int T = env_int("O3NPU_NAME_T", 1);
+    int in_dims[4]  = { 1, 1, 1, K };
+    int w_dims[4]   = { 1, 1, K, M };
+    int out_dims[4] = { T, 1, 1, M };
+    int act = env_int("O3NPU_GEMM_ACT", 5);
+    int transposed = env_int("O3NPU_TRANSPOSED_W", 1);
+    int config = env_int("O3NPU_GEMM_PARAM18", 2);
+    /* getGemmSplitMNKernelReorderSize only inspects the boxes; it does not
+     * dereference these addresses. */
+    int rc = o3xnnl_gemm_reorder_size(m->xnnl,
+                                      in_dims, (const void *) (uintptr_t) 0x100000,
+                                      w_dims,  (const void *) (uintptr_t) 0x200000,
+                                      out_dims, (void *) (uintptr_t) 0x300000,
+                                      act, transposed, config);
+    printf("gemm_reorder_size rc=%d act=%d trans=%d cfg=%d K=%d M=%d T=%d\n",
+           rc, act, transposed, config, K, M, T);
     o3npu_matmul_close(m);
     return rc;
 }

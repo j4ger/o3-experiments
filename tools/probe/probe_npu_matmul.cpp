@@ -24,6 +24,7 @@ extern "C" int o3npu_limits(void);
 extern "C" int o3npu_modules(void);
 extern "C" int o3npu_funcs(void);
 extern "C" int o3npu_gemm_name(void);
+extern "C" int o3npu_gemm_reorder_size(void);
 extern "C" int o3npu_unary_test(const char * name, int n, int trace);
 
 #include <cmath>
@@ -155,6 +156,8 @@ int main(int argc, char ** argv) {
             return o3npu_funcs();
         } else if (a == "--gemm-name") {
             return o3npu_gemm_name();
+        } else if (a == "--gemm-reorder-size") {
+            return o3npu_gemm_reorder_size();
         } else if (a == "--op" && i + 1 < argc) {
             const char * op = argv[++i];
             int rc = o3npu_unary_test(op, K, 1);

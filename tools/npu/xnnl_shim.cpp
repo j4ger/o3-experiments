@@ -49,6 +49,8 @@ struct o3xnnl {
     int (*add_gemm)(void *, void *, int, void *, void *, void *, void *, void *, void *,
                     int, int, int, int, int, int, void *, void *, int);
     int (*get_gemm_name)(std::string &, void *, int, unsigned int, unsigned int);
+    int (*get_reorder_size)(void *, void *, void *, void *, uint32_t *, uint32_t *,
+                            uint32_t, uint8_t, uint32_t);
     int (*matmul)(xnnlHandle_t, void *, xnnlTensorDescriptor_t, const void *,
                   xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, const void *,
                   const void *, const void *, xnnlTensorDescriptor_t, void *,
@@ -177,6 +179,7 @@ int o3xnnl_open(void ** out, void * mida_device) {
         sym(s->lib, "xnnlSetTensorDescriptorBoxInfo", (void **) &s->set_box) ||
         sym(s->lib, "xnnlAddGemmSplitMNKernelNode", (void **) &s->add_gemm) ||
         sym(s->lib, "xnnlGetGemmSplitMNKernelName", (void **) &s->get_gemm_name) ||
+        sym(s->lib, "xnnlGetGemmSplitMNKernelReorderSize", (void **) &s->get_reorder_size) ||
         sym(s->lib, "xnnlMatmulCreateGraph", (void **) &s->matmul)) {
         dlclose(s->lib);
         delete s;
@@ -370,6 +373,27 @@ extern "C" int o3xnnl_gemm_name(void * handle, const int out_dims[4], void * out
     int rc = s->get_gemm_name(name, &bo, act, (unsigned) all_head_num, (unsigned) flags);
     fprintf(stderr, "xnnl_shim: gemm_name(act=%d allhead=%d flags=%d) -> %d name='%s'\n",
             act, all_head_num, flags, rc, name.c_str());
+    return rc;
+}
+
+extern "C" int o3xnnl_gemm_reorder_size(void * handle,
+                                        const int in_dims[4], const void * in_ptr,
+                                        const int w_dims[4], const void * w_ptr,
+                                        const int out_dims[4], void * out_ptr,
+                                        int act, int transposed, int config) {
+    struct o3xnnl * s = (struct o3xnnl *) handle;
+    if (!s || !s->get_reorder_size) return -1;
+    o3_tensor_box bi, bw, bo;
+    fill_box(&bi, in_dims, (void *) in_ptr);
+    fill_box(&bw, w_dims, (void *) w_ptr);
+    fill_box(&bo, out_dims, out_ptr);
+    uint32_t sdp = 0, gw = 0;
+    int rc = s->get_reorder_size(&bi, &bw, nullptr, &bo, &sdp, &gw,
+                                 (uint32_t) act, (uint8_t) (transposed ? 1 : 0),
+                                 (uint32_t) config);
+    fprintf(stderr, "xnnl_shim: gemm_reorder_size(act=%d trans=%d cfg=%d) -> %d "
+                    "sdpSize=%u gwScaleSize=%u\n",
+            act, transposed, config, rc, sdp, gw);
     return rc;
 }
 
