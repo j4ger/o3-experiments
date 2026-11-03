@@ -85,8 +85,9 @@ O3NPU_GEMM_SDP_CPU=1      # 把 CPU 指针（而不是设备 VA）传给 addGemm
 - kernel name 从 `gemmSplitMNEpilogueFusedWithSiluKernel` 变为
   `gemmSplitMNEpilogueFusedWithSiluSdpKernel`，说明 SDP 缓冲已被识别；
 - 但输出仍为 `1.0` pattern；VA 和 CPU 指针两种传法都试过。
-- 注意：`epilogueParams` 当前用全零 256 字节结构；这只够让 reorder 返回 0，
-  不代表语义正确。
+- 注意：`xnnlEpilogueParams` 实际大小是 0x38（`xnnlCreateEpilogueParams` 分配
+  0x38，`xnnlSetEpilogueParams` 写 7 个 qword）；当前用一个全零 0x38 结构，
+  这只够让 reorder 返回 0，不代表字段语义正确。
 
 下一步离线任务：恢复 `xnnlEpilogueParams` / `xnnlSdpDataReorder` 的字段语义，
 确认 192 字节 SDP 缓冲的内容以及 kernel 最终应该从哪里读它；

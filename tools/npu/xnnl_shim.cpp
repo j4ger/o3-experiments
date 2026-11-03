@@ -412,7 +412,7 @@ extern "C" int o3xnnl_gemm_reorder(void * handle,
     fill_box(&bi, in_dims, (void *) in_ptr);
     fill_box(&bw, w_dims, (void *) w_ptr);
     fill_box(&bo, out_dims, out_ptr);
-    unsigned char ep[256];
+    unsigned char ep[0x38];
     memset(ep, 0, sizeof ep);
     int rc = s->gemm_reorder(&bi, &bw, nullptr,
                              (float *) sdp_host, nullptr, &bo,
