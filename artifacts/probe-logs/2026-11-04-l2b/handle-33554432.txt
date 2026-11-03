@@ -1,0 +1,5 @@
+xnnl_shim: handle+0x10 <- 33554432
+xnnl_shim: addGemmSplitMN(box, p3=0 p10=5 p18=2) -> 0
+Segmentation fault 
+
+__EXIT=139

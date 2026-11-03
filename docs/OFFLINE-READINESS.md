@@ -96,34 +96,45 @@ struct { uint32_t size; uint32_t reserved; } p = { 294912, 0 };
 O3NPU_BARRIER=1          # kernel 后加 Barrier(mode=1, queue=0)
 O3NPU_OUT_PATTERN=1      # 输出预填 1.0，用于判定 kernel 是否写回
 O3NPU_VIS=/path.dot      # 导出执行图 DOT
-O3NPU_HANDLE_L2B=<bytes> # 写 xnnlHandle+0x10（L2B max size）
 O3NPU_MEM_FLAG=5
 O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=0 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2
 O3NPU_TRANSPOSED_W=1
 ```
 
-## 4. 设备恢复后的单变量顺序
+已从 probe 移除的危险选项（不要再加回来）：
 
-1. 基线复测（已做过一次，保留复现命令）：
+- `O3NPU_HANDLE_L2B`：写 `xnnlHandle+0x10` 后，下一次
+  `xnnlAddGemmSplitMNKernelNode` 会 segfault；该偏移不是 l2bMaxSize。
+- `O3NPU_L2BALLOC`：`midaSubgraphAddL2bAllocNode` 即使参数满足
+  `AllocL2BNodeExecImpl::ParamsCheck` 也会 segfault，说明还需要恢复
+  `PrepareAllocFreeL2B` 的完整参数语义，不能直接上设备。
+- `O3NPU_DMASPLIT=3`：segfault；0/1/2 无效果。
 
-```bash
-nix develop -c adb push result/bin/probe_npu_matmul /data/local/tmp/
-nix develop -c adb shell "/data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; \
-  O3NPU_MEM_FLAG=5 O3NPU_OUT_PATTERN=1 O3NPU_BARRIER=1 \
-  O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=0 O3NPU_GEMM_PARAM10=5 \
-  O3NPU_GEMM_PARAM18=2 O3NPU_TRANSPOSED_W=1 \
-  ./probe_npu_matmul --k 576 --m 576 --t 1 2>&1'"
-```
+## 4. 2026-11-04 实机结果
 
-期望：DOT `1 queue, total node 2`；当前实际输出仍为 `1.0` pattern。
+设备恢复后按单变量跑过：
 
-2. 只改一个变量：`O3NPU_HANDLE_L2B=8388608` / `16777216`。
-   若输出变为非 pattern，则 L2B pool 就是缺口。
+| 变量 | 结果 |
+|---|---|
+| barrier 基线 | DOT `1 queue, total node 2`；输出仍为 `1.0` pattern |
+| `O3NPU_HANDLE_L2B=1M/8M/16M/32M` | 下一次 `addGemmSplitMN` 后立即 segfault |
+| `O3NPU_L2B=128K/512K/1M/8M` | 输出仍为 pattern |
+| `O3NPU_STACK=256K/1M/4M` | 输出仍为 pattern |
+| `O3NPU_DMASPLIT=0/1/2` | 输出仍为 pattern；=3 segfault |
+| `O3NPU_TRANSPOSED_W=0` | 输出仍为 pattern |
+| `O3NPU_L2BALLOC=1` + `O3NPU_L2B=8M` | segfault |
 
-3. 再试 `O3NPU_L2B=...`（实例化参数）与 `O3NPU_STACK=...`，每次只留一个变量。
+结论：L2B pool 大小、subgraph l2bSize、kernel stack、DMA split、weight transposed
+都不是“kernel 不写回”的开关。下一步必须回到离线，恢复
+`AllocL2BNodeExecImpl::PrepareAllocFreeL2B` 和 `ReadL2BNodeExecImpl::PrepareRWDMA`
+的完整参数语义，再决定是否补 L2B 读写节点。
 
-4. 如果 L2B/stack 都无效，再回到 `xnnlGemmSplitMNKernelReorder`，用上面的签名做最小诊断，
-   但注意当前 `sdpBlkSize=0`、`groupwiseCnt=0`，reorder 大概率不是直接原因。
+## 5. 设备恢复后的下一步
+
+1. 先保留 barrier 基线，作为验收基准。
+2. 离线恢复 `midaAllocFreeL2BNodeParams` / `midaRWL2BNodeParams` 的完整字段表。
+3. 只有在 host mock 或静态检查通过后，才再次上机测试 L2B 读写节点。
+4. 不再用参数 sweep 代替静态分析。
 
 ## 5. 禁止项
 

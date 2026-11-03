@@ -171,12 +171,24 @@ standalone `xnnlAddGemmSplitMNKernelNode` 不带这些 FFN L2B 节点是正常�
    - 但输出仍为 `1.0` pattern，所以 Barrier 只是补齐了图结构，
      kernel 本身仍未写回。
 
+   2026-11-04 单变量复盘：
+
+   - `O3NPU_HANDLE_L2B` 写 `handle+0x10` 会让下一次 addGemmSplitMN segfault，
+     该偏移不是 l2bMaxSize；已从 probe 移除。
+   - `O3NPU_L2B`（128K/512K/1M/8M）、`O3NPU_STACK`（256K/1M/4M）、
+     `O3NPU_DMASPLIT`（0/1/2）、`O3NPU_TRANSPOSED_W=0` 都不改变 `1.0` pattern。
+   - `O3NPU_L2BALLOC` 即使参数满足 `AllocL2BNodeExecImpl::ParamsCheck` 也 segfault，
+     需要先恢复 `PrepareAllocFreeL2B` 的完整参数语义。
+
    下一层按优先级：
 
-   1. `xnnlGemmSplitMNKernelReorder`：权重是否必须先经过 splitMN 重排；
-   2. `weightL1bBytes_=294912 > sharedMemBytes_=131072` 对应的 L2B 读写节点；
-   3. `stack mem is null` 是否意味着 GemmSplitMN 需要显式 kernel stack。
-   之后再处理 `GemmSplitMNKernelParaStorage`。
+   1. 离线恢复 `midaAllocFreeL2BNodeParams` / `midaRWL2BNodeParams` 的完整字段表
+      与 `PrepareAllocFreeL2B` / `PrepareRWDMA` 参数语义；
+   2. 确认 `weightL1bBytes_=294912 > sharedMemBytes_=131072` 是否需要
+      L2B alloc + read 节点；
+   3. `stack mem is null` 暂不作为主假设（显式 stack 已试过，无变化）。
+   `xnnlGemmSplitMNKernelReorder` 已恢复签名，但当前 `sdpBlkSize=0`、
+   `groupwiseCnt=0`，优先级下调。
 
 ## 4. 判定树
 

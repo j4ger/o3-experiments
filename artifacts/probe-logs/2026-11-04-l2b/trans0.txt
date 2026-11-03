@@ -1,0 +1,14 @@
+xnnl_shim: addGemmSplitMN(box, p3=0 p10=5 p18=2) -> 0
+== probe_npu_matmul (weight layout: xnnl) ==
+K=576 M=576 T=1  max|NPU-CPU|=23.4512  MISMATCH
+   [0] ref=-6.891796 got=1.000000
+   [1] ref=-1.323168 got=1.000000
+   [2] ref=8.675032 got=1.000000
+   [3] ref=-13.665798 got=1.000000
+   [4] ref=5.975641 got=1.000000
+   [5] ref=-10.377496 got=1.000000
+   [6] ref=6.206760 got=1.000000
+   [7] ref=4.112817 got=1.000000
+RESULT failed (2 failures)
+
+__EXIT=4

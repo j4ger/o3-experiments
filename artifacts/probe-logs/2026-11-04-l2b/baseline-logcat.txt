@@ -1,0 +1,58 @@
+--------- beginning of main
+11-04 00:49:24.069  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.069  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6828.719727 mTargetCCT 6828.719727
+11-04 00:49:24.069  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.069  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6695.262207 mTargetCCT 6690.370605
+11-04 00:49:24.069  2208  2952 I libsensor-calapi: lhasa_apply_custom_filter: preLux=151.481567, lux=151.481567
+11-04 00:49:24.136  1771  2113 I android.hardware.graphics.composer3-service.xring: Sensor: notify citsensorservice to trigger cwb, misForced = 0, misPrimary 0
+11-04 00:49:24.137  2208  2895 I libsensor-parseRGB: request, displayId: 1, mRequestDisplayId: 1, readyToRequest: 1
+11-04 00:49:24.137  2208  2947 I libsensor-parseRGB: threadTriggerDump wait cwb done
+11-04 00:49:24.137  2208  2948 I libsensor-parseRGB: capture, misCwbDone: 0, displayId:1, wait:1, dump:0, proceed:0
+11-04 00:49:24.137  2208  2948 I libsensor-parseRGB: capture delay request
+11-04 00:49:24.158  2208  2895 I libsensor-parseRGB: onCwbSuccess, mRequestDisplayId 1, mCbf.size=1, this=0xb400007c2d8168b0, timestamp 345264053168960
+11-04 00:49:24.158  2208  2948 I libsensor-parseRGB: capture, misCwbDone: 1, displayId:1, wait:1, dump:0, proceed:1
+11-04 00:49:24.158  2208  2948 I libsensor-parseRGB: capture delay request
+11-04 00:49:24.158  2208  2947 I libsensor-parseRGB: threadTriggerDump cwb done
+11-04 00:49:24.261  2208  2952 I libsensor-calapi: lhasa_apply_custom_filter: preLux=151.493958, lux=151.493958
+11-04 00:49:24.261  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.261  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6828.719727 mTargetCCT 6828.719727
+11-04 00:49:24.261  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.261  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6695.262207 mTargetCCT 6690.370605
+11-04 00:49:24.409  2208  2948 I libsensor-parseRGB: capture, misCwbDone: 1, displayId:1, wait:0, dump:1, proceed:0
+11-04 00:49:24.409  2208  2948 W libsensor-parseRGB: capture dump displayId:1, count:0
+11-04 00:49:24.409  2224  2224 I adbd    : adbd service requested 'shell,v2,TERM=dumb,raw:/data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; O3NPU_MEM_FLAG=5 O3NPU_OUT_PATTERN=1 O3NPU_TRACE=1 O3NPU_BARRIER=1 O3NPU_VIS=/data/local/tmp/gemm_barrier.dot O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=0 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2 O3NPU_TRANSPOSED_W=1 ./probe_npu_matmul_nix --k 576 --m 576 --t 1 2>&1''
+11-04 00:49:24.409  2224  2224 I adbd    : in ShellService: /data/local/tmp/o3p_chat.bin --shell 'cd /data/local/tmp; O3NPU_MEM_FLAG=5 O3NPU_OUT_PATTERN=1 O3NPU_TRACE=1 O3NPU_BARRIER=1 O3NPU_VIS=/data/local/tmp/gemm_barrier.dot O3NPU_GEMM=1 O3NPU_GEMM_PARAM3=0 O3NPU_GEMM_PARAM10=5 O3NPU_GEMM_PARAM18=2 O3NPU_TRANSPOSED_W=1 ./probe_npu_matmul_nix --k 576 --m 576 --t 1 2>&1'
+11-04 00:49:24.409  2208  2948 I libsensor-parseRGB: capture fast request
+11-04 00:49:24.441 23184 23184 W libc    : Access denied finding property "persist.vendor.track.malloc.enable"
+11-04 00:49:24.441 23184 23184 W libc    : Access denied finding property "persist.vendor.fd.monitor.enable"
+11-04 00:49:24.442  8011  8942 D JavaheapMonitor: Java heap used=12M max=384M, proc: com.miui.powerkeeper
+11-04 00:49:24.442  8011  8942 V JavaheapMonitor: Check java heap usage finished! Next check delay: 300000
+11-04 00:49:24.443 23184 23184 W libc    : Access denied finding property "ro.vendor.net.upload.mark.default"
+11-04 00:49:24.451  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.451  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6828.719727 mTargetCCT 6828.719727
+11-04 00:49:24.451  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.451  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6695.262207 mTargetCCT 6690.370605
+11-04 00:49:24.479 23186 23186 W libc    : Access denied finding property "persist.vendor.track.malloc.enable"
+11-04 00:49:24.479 23186 23186 W libc    : Access denied finding property "persist.vendor.fd.monitor.enable"
+11-04 00:49:24.484 23186 23186 W libc    : Access denied finding property "ro.vendor.net.upload.mark.default"
+11-04 00:49:24.484 23186 23186 I kernel_runtime: [device_impl.cpp:211]:>>>>>>>>>>>>>>>>>>> NPU UMD Version: 0.7.13 Date:Oct 12 2026 10:37:15<<<<<<<<<<<<<<<<<<<
+11-04 00:49:24.521 23186 23186 W kernel_runtime: [module_impl.cpp:428]:module no kernel
+11-04 00:49:24.534  1836  1836 D AudioFlinger: onStateChanged: pid:17714  uid:10304  state:unfrozen - no freeze activity
+11-04 00:49:24.539 23186 23186 I [XNNL]: : [handle.cpp:81]:Created handle with 64 discrete ELF modules
+--------- beginning of system
+11-04 00:49:24.540  2511  3696 W WindowManager: getProcessMemoryInfo: caller 10304 does not hold REAL_GET_TASKS; limiting output
+11-04 00:49:24.541  2511  4100 D GreezeManager: THAW uid = 10304 pid = [ 17543 17714 23785 ]  reason : packet caller : 1000
+11-04 00:49:24.542  2511  4100 D ExternalInterface: setUidState, uid = 10304 allow = true
+11-04 00:49:24.542  2511  3031 I PowerInsightServer_PowerInsightServiceImpl: clearUidNetworkFilter uid not in doze set, skip uid = 10304
+11-04 00:49:24.547  2511  3805 E AlarmManager: not align this alarm: Alarm{1f967d5 type 2 origWhen 345444439 whenElapsed 345444439 com.tencent.mobileqq}, reason=0
+11-04 00:49:24.547  2511  4100 W WindowManager: getRunningAppProcesses: caller 10304 does not hold REAL_GET_TASKS; limiting output
+11-04 00:49:24.552 23186 23186 W kernel_runtime: [subgraphexec_impl.cpp:4253]:stack mem is null
+11-04 00:49:24.624  2224  2224 I adbd    : adbd service requested 'shell,v2,TERM=dumb:export ANDROID_LOG_TAGS=''; exec logcat '-b' 'all' '-d''
+11-04 00:49:24.624  2224  2224 I adbd    : in ShellService: export ANDROID_LOG_TAGS=''; exec logcat '-b' 'all' '-d'
+11-04 00:49:24.635  2511  4100 W ActivityManagerServiceImpl: Sending non-protected broadcast com.modemenhance.ACTION_MODEMWIFI_RSSI_POLL from system 3638:com.android.phone/1001 pkg com.android.phone. Callers=
+11-04 00:49:24.638  3638  3638 D SlaveWifiManager: getWifiSlaveConnectionInfo
+11-04 00:49:24.641  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.641  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6828.719727 mTargetCCT 6828.719727
+11-04 00:49:24.641  1799  1799 D TRUETONE: sensorCallback back_cct 5000.000000 back_lux 0.000000 front_cct 4689.000000 front_lux 146.637802 event 33171288 target_lux 146.637802 target_cct 4689.000000
+11-04 00:49:24.642  1799  1799 D TRUETONE: sensorCallback Cct value=<4689.0000>  mLastCCT 6695.262207 mTargetCCT 6690.370605
+11-04 00:49:24.661 23190 23190 W libc    : Access denied finding property "ro.vendor.net.upload.mark.default"

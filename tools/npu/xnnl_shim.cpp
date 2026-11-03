@@ -203,13 +203,8 @@ int o3xnnl_open(void ** out, void * mida_device) {
         }
     }
 
-    {
-        const char * hb = getenv("O3NPU_HANDLE_L2B");
-        if (hb && *hb) {
-            *(uint32_t *) ((char *) h + 0x10) = (uint32_t) strtoul(hb, nullptr, 0);
-            fprintf(stderr, "xnnl_shim: handle+0x10 <- %s\n", hb);
-        }
-    }
+    /* Note: patching handle+0x10 (old O3NPU_HANDLE_L2B) makes the next
+     * xnnlAddGemmSplitMNKernelNode segfault; that offset is not l2bMaxSize. */
 
     {
         const char * lvl = getenv("O3NPU_XNNL_LOG");
