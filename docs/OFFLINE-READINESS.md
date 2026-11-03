@@ -58,15 +58,39 @@ xnnlGetGemmSplitMNKernelReorderSize(in, w, nullptr, out, &sdp, &gw,
 sdpSize=192, gwScaleSize=0
 ```
 
-- `param_3` 不是 output；`param_4` 才是 output box。传反了会报
-  `output_ == nullptr`。
-- 当前配置 **确实需要** 192 字节的 SDP/epilogue reorder 数据，即使
-  `sdpBlkSize=0`、`groupwiseCnt=0`。
-- 所以 `xnnlGemmSplitMNKernelReorder` 不再是低优先级；它可能是 kernel
-  不写回的直接原因：reorder 数据没有准备好，也没有通过
-  `xnnlAddGemmSplitMNKernelNode` 的 `param_16` / `param_17` 传给 kernel。
-- 下一步离线任务：反汇编 `xnnlAddGemmSplitMNKernelNode` 与
-  `GemmSplitMNImpl::addKernel`，确认 192 字节 reorder 缓冲应该如何传入。
+正确的 reorder 调用顺序（Ghidra 0x7669b0 + 设备验证）：
+
+```c
+xnnlGemmSplitMNKernelReorder(
+    inBox, weightBox, nullptr,
+    sdpData,          // 192 字节 reorder 输出缓冲
+    gwScale,          // groupwise scale，当前为 NULL
+    outBox,
+    actMode, epilogueParams,
+    transposedW, configType);
+```
+
+已加到 probe 的开关：
+
+```text
+O3NPU_GEMM_SDP=1          # 分配 192 字节 SDP 缓冲，并把 VA 传给 addGemm
+O3NPU_GEMM_REORDER=1      # 先调用 xnnlGemmSplitMNKernelReorder 填充它
+O3NPU_GEMM_SDP_CPU=1      # 把 CPU 指针（而不是设备 VA）传给 addGemm
+```
+
+实测结果：
+
+- `--gemm-reorder-size` 返回 0，`sdpSize=192`；
+- `O3NPU_GEMM_SDP=1 O3NPU_GEMM_REORDER=1` 时 reorder 返回 0；
+- kernel name 从 `gemmSplitMNEpilogueFusedWithSiluKernel` 变为
+  `gemmSplitMNEpilogueFusedWithSiluSdpKernel`，说明 SDP 缓冲已被识别；
+- 但输出仍为 `1.0` pattern；VA 和 CPU 指针两种传法都试过。
+- 注意：`epilogueParams` 当前用全零 256 字节结构；这只够让 reorder 返回 0，
+  不代表语义正确。
+
+下一步离线任务：恢复 `xnnlEpilogueParams` / `xnnlSdpDataReorder` 的字段语义，
+确认 192 字节 SDP 缓冲的内容以及 kernel 最终应该从哪里读它；
+否则即使图结构和 SDP 指针都对了，kernel 仍不写回。
 
 ## 3. L2B 参数结构（libxnumd 反汇编）
 

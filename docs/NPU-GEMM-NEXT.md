@@ -182,10 +182,11 @@ standalone `xnnlAddGemmSplitMNKernelNode` 不带这些 FFN L2B 节点是正常�
 
    下一层按优先级：
 
-   1. **epilogue reorder**：`--gemm-reorder-size` 实测返回 0，
-      `sdpSize=192`、`gwScaleSize=0`（`act=5 trans=1 cfg=2`）。
-      说明当前配置确实需要 192 字节 reorder 数据；需要确认它如何经
-      `xnnlAddGemmSplitMNKernelNode` 的 `param_16` / `param_17` 传入 kernel。
+   1. **epilogue reorder / SDP**：`--gemm-reorder-size` 返回 0，
+      `sdpSize=192`、`gwScaleSize=0`；`O3NPU_GEMM_SDP=1
+      O3NPU_GEMM_REORDER=1` 后 reorder 返回 0，kernel name 变为
+      `gemmSplitMNEpilogueFusedWithSiluSdpKernel`，但输出仍为 pattern。
+      下一步是恢复 `xnnlEpilogueParams` / `xnnlSdpDataReorder` 的字段语义。
    2. 离线恢复 `midaAllocFreeL2BNodeParams` / `midaRWL2BNodeParams` 完整字段表
       与 `PrepareAllocFreeL2B` / `PrepareRWDMA` 参数语义；
    3. `weightL1bBytes_=294912 > sharedMemBytes_=131072` 是否需要

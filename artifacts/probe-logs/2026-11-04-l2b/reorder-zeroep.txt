@@ -1,0 +1,26 @@
+xnnl_shim: gemm_reorder(act=5 trans=1 cfg=2 sdp=0x6e3d6e9000) -> 1
+xnnl_shim: addGemmSplitMN(box, p3=0 p10=5 p18=2 sdp=0x4fa000) -> 0
+== probe_npu_matmul (weight layout: ggml) ==
+o3npu_matmul: device=0xb400006f9f60ecc0 stream=0xb400006f4f617ef0 transposed_w=1
+o3npu: buf o3in    size=4096 flag=5 cpu=0x6e3f3ba000 fd=28080 va=0x456000
+o3npu: buf o3w     size=663552 flag=5 cpu=0x6e3cb36000 fd=28081 va=0x457000
+o3npu: buf o3out   size=4096 flag=5 cpu=0x6e3d6ea000 fd=28082 va=0x4f9000
+o3npu: buf o3sdp   size=4096 flag=5 cpu=0x6e3d6e9000 fd=28083 va=0x4fa000
+o3npu: sdp buffer va=0x4fa000 size=192
+o3npu: gemm_reorder -> 1
+o3npu: addBarrier after kernel -> 0 node=0xb400006f6f630d90 mode=1
+o3npu: stack_info rc=1 size=0 mem=0x0
+o3npu: midaSubgraphPrintInfo -> 0
+o3npu: midaSubgraphExecPrintInfo -> 0
+K=576 M=576 T=1  max|NPU-CPU|=23.4512  MISMATCH
+   [0] ref=-6.891796 got=1.000000
+   [1] ref=-1.323168 got=1.000000
+   [2] ref=8.675032 got=1.000000
+   [3] ref=-13.665798 got=1.000000
+   [4] ref=5.975641 got=1.000000
+   [5] ref=-10.377496 got=1.000000
+   [6] ref=6.206760 got=1.000000
+   [7] ref=4.112817 got=1.000000
+RESULT failed (2 failures)
+
+__EXIT=4

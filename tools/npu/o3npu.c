@@ -27,6 +27,7 @@ extern int  o3xnnl_gemm_splitmn(void * handle, void * subgraph,
                                 const int in_dims[4], const void * in_ptr,
                                 const int w_dims[4], const void * w_ptr,
                                 const int out_dims[4], void * out_ptr,
+                                void * sdp_buf,
                                 int transposed_w, void * wscale, int nscale);
 extern int  o3xnnl_gemm_name(void * handle, const int out_dims[4], void * out_ptr,
                              int act, int all_head_num, int flags);
@@ -35,6 +36,11 @@ extern int  o3xnnl_gemm_reorder_size(void * handle,
                                      const int w_dims[4], const void * w_ptr,
                                      const int out_dims[4], void * out_ptr,
                                      int act, int transposed, int config);
+extern int  o3xnnl_gemm_reorder(void * handle,
+                                const int in_dims[4], const void * in_ptr,
+                                const int w_dims[4], const void * w_ptr,
+                                const int out_dims[4], void * out_ptr,
+                                void * sdp_host, int act, int transposed, int config);
 extern int  o3xnnl_matmul_graph(void * handle, void * subgraph,
                                 const int in_dims[4], const void * in_ptr,
                                 const int w_dims[4], const void * w_ptr,
@@ -444,6 +450,7 @@ struct o3npu_matmul {
     struct dbuf  out;
     struct dbuf  wscale;
     struct dbuf  stack;
+    struct dbuf  sdp;
     int          trace;
     int          transposed_w;   /* 1: weight stays in ggml layout */
     char         err[256];
@@ -544,6 +551,7 @@ void o3npu_matmul_close(o3npu_matmul_t * m) {
     dbuf_free(m->api, &m->in);
     dbuf_free(m->api, &m->w);
     dbuf_free(m->api, &m->out);
+    dbuf_free(m->api, &m->sdp);
     if (m->stream) m->api->stream_destroy(m->stream);
     if (m->xnnl) o3xnnl_close(m->xnnl);
     if (m->dev) m->api->device_release(m->dev);
@@ -662,11 +670,40 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         }
     }
 
+    void * sdp_buf = NULL;
+    if (env_int("O3NPU_GEMM_SDP", 0)) {
+        int sdp_size = env_int("O3NPU_GEMM_SDP_SIZE", 192);
+        if (dbuf_reserve(a, m->dev, &m->sdp, (uint64_t) sdp_size, "o3sdp") == 0) {
+            dbuf_sync_cpu(a, &m->sdp);
+            memset(m->sdp.cpu, 0, (size_t) sdp_size);
+            dbuf_sync_dev(a, &m->sdp);
+            if (env_int("O3NPU_GEMM_SDP_CPU", 0)) {
+                sdp_buf = (void *) m->sdp.cpu;
+            } else {
+                sdp_buf = (void *) m->sdp.va;
+            }
+            if (m->trace) printf("o3npu: sdp buffer va=0x%llx cpu=%p size=%d\n",
+                                 (unsigned long long) m->sdp.va, m->sdp.cpu, sdp_size);
+            int act = env_int("O3NPU_GEMM_PARAM10", 5);
+            int cfg = env_int("O3NPU_GEMM_PARAM18", 2);
+            if (env_int("O3NPU_GEMM_REORDER", 0)) {
+                int rr = o3xnnl_gemm_reorder(m->xnnl,
+                                             in_dims, (const void *) m->in.va,
+                                             w_dims,  (const void *) m->w.va,
+                                             out_dims, (void *) m->out.va,
+                                             m->sdp.cpu, act, m->transposed_w, cfg);
+                if (m->trace) printf("o3npu: gemm_reorder -> %d\n", rr);
+            }
+            dbuf_sync_dev(a, &m->sdp);
+        }
+    }
+
     if (getenv("O3NPU_GEMM") && *getenv("O3NPU_GEMM") == '1') {
         rc = o3xnnl_gemm_splitmn(m->xnnl, sub,
                                  in_dims, (const void *) m->in.va,
                                  w_dims,  (const void *) m->w.va,
                                  out_dims, (void *) m->out.va,
+                                 sdp_buf,
                                  m->transposed_w, wscale_ptr, nscale);
     } else {
     rc = o3xnnl_matmul_graph(m->xnnl, sub,

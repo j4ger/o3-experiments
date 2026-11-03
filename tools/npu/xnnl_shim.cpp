@@ -51,6 +51,8 @@ struct o3xnnl {
     int (*get_gemm_name)(std::string &, void *, int, unsigned int, unsigned int);
     int (*get_reorder_size)(void *, void *, void *, void *, uint32_t *, uint32_t *,
                             uint32_t, uint8_t, uint32_t);
+    int (*gemm_reorder)(void *, void *, void *, void *, void *, void *,
+                        uint32_t, void *, uint8_t, uint32_t);
     int (*matmul)(xnnlHandle_t, void *, xnnlTensorDescriptor_t, const void *,
                   xnnlTensorDescriptor_t, const void *, xnnlTensorDescriptor_t, const void *,
                   const void *, const void *, xnnlTensorDescriptor_t, void *,
@@ -180,6 +182,7 @@ int o3xnnl_open(void ** out, void * mida_device) {
         sym(s->lib, "xnnlAddGemmSplitMNKernelNode", (void **) &s->add_gemm) ||
         sym(s->lib, "xnnlGetGemmSplitMNKernelName", (void **) &s->get_gemm_name) ||
         sym(s->lib, "xnnlGetGemmSplitMNKernelReorderSize", (void **) &s->get_reorder_size) ||
+        sym(s->lib, "xnnlGemmSplitMNKernelReorder", (void **) &s->gemm_reorder) ||
         sym(s->lib, "xnnlMatmulCreateGraph", (void **) &s->matmul)) {
         dlclose(s->lib);
         delete s;
@@ -344,6 +347,7 @@ extern "C" int o3xnnl_gemm_splitmn(void * handle, void * subgraph,
                         const int in_dims[4], const void * in_ptr,
                         const int w_dims[4], const void * w_ptr,
                         const int out_dims[4], void * out_ptr,
+                        void * sdp_buf,
                         int transposed_w, void * wscale, int nscale) {
     struct o3xnnl * s = (struct o3xnnl *) handle;
     if (!s || !subgraph || !s->add_gemm) return -1;
@@ -356,10 +360,10 @@ extern "C" int o3xnnl_gemm_splitmn(void * handle, void * subgraph,
     int p10 = env_i("O3NPU_GEMM_PARAM10", 5);
     int p18 = env_i("O3NPU_GEMM_PARAM18", 2);
     /* xnnlAddGemmSplitMNKernelNode(graph, handle, ...), not (handle, graph)! */
-    int rc = s->add_gemm(subgraph, s->handle, p3, &bi, &bw, 0, 0, 0, &bo,
+    int rc = s->add_gemm(subgraph, s->handle, p3, &bi, &bw, 0, sdp_buf, 0, &bo,
                          p10, 1, 0, transposed_w ? 1 : 0, 0, 0, nullptr, nullptr, p18);
-    fprintf(stderr, "xnnl_shim: addGemmSplitMN(box, p3=%d p10=%d p18=%d) -> %d\n",
-            p3, p10, p18, rc);
+    fprintf(stderr, "xnnl_shim: addGemmSplitMN(box, p3=%d p10=%d p18=%d sdp=%p) -> %d\n",
+            p3, p10, p18, sdp_buf, rc);
     return rc;
 }
 
@@ -394,6 +398,28 @@ extern "C" int o3xnnl_gemm_reorder_size(void * handle,
     fprintf(stderr, "xnnl_shim: gemm_reorder_size(act=%d trans=%d cfg=%d) -> %d "
                     "sdpSize=%u gwScaleSize=%u\n",
             act, transposed, config, rc, sdp, gw);
+    return rc;
+}
+
+extern "C" int o3xnnl_gemm_reorder(void * handle,
+                                    const int in_dims[4], const void * in_ptr,
+                                    const int w_dims[4], const void * w_ptr,
+                                    const int out_dims[4], void * out_ptr,
+                                    void * sdp_host, int act, int transposed, int config) {
+    struct o3xnnl * s = (struct o3xnnl *) handle;
+    if (!s || !s->gemm_reorder) return -1;
+    o3_tensor_box bi, bw, bo;
+    fill_box(&bi, in_dims, (void *) in_ptr);
+    fill_box(&bw, w_dims, (void *) w_ptr);
+    fill_box(&bo, out_dims, out_ptr);
+    unsigned char ep[256];
+    memset(ep, 0, sizeof ep);
+    int rc = s->gemm_reorder(&bi, &bw, nullptr,
+                             (float *) sdp_host, nullptr, &bo,
+                             (uint32_t) act, ep,
+                             (uint8_t) (transposed ? 1 : 0), (uint32_t) config);
+    fprintf(stderr, "xnnl_shim: gemm_reorder(act=%d trans=%d cfg=%d sdp=%p) -> %d\n",
+            act, transposed, config, sdp_host, rc);
     return rc;
 }
 
