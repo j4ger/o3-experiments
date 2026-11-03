@@ -203,6 +203,41 @@ CU 数量都不是“kernel 不写回”的开关。下一步必须回到离线�
 
 ## 5. 禁止项
 
-- 不在设备上跑 `--funcs` 全模块扫描（上次挂死并掉线）。
+- 不在设备上跑 `--funcs` 全模块扫描（上次挂死并掉线）。需要精确查找时用 `--find-gemm`（`O3NPU_FIND_MAX` 限模块数）。
 - 不用 0x40 全零参数硬猜 `midaBarrierNodeParams` / L2B 结构；本次已经因此 segfault 过。
 - 不同时修改 barrier + L2B + reorder；一次只留一个变量。
+- 每轮设备实验必须先声明“它能证伪哪个假设、正反两种结果各说明什么”，否则不做（避免再次参数 sweep）。
+
+## 6. 2026-11-04 判别实验包（已就绪，等设备）
+
+背景与判据见 [`NPU-GEMM-NEXT.md`](NPU-GEMM-NEXT.md) 第 7 节：E5 已重新定性为
+**H-E「任务是否被执行」**，而不是参数/布局调不对。
+
+### 构建验证（离线，已完成）
+
+```bash
+tools/probe/build.sh /tmp/probe_npu_matmul_suite     # 直连 NDK，通过
+nix build .#probe-npu-matmul --offline               # flake 目标，通过（result 已更新）
+tools/npu/offline-check.sh                           # PASS
+```
+
+### 一键批量跑（一次解锁）
+
+```bash
+tools/probe/device-suite.sh                  # 跑全部 e0..e9
+tools/probe/device-suite.sh --only e1 e4 e5  # 只跑关键判别项
+```
+
+脚本会 push 探针与 `artifacts/cdn/libxnnl.so`（E7 用），逐实验隔离
+`logcat` / `dmesg`，汇总到 `artifacts/probe-logs/<stamp>-gemm-suite/RESULTS.md`。
+
+### 新增开关速查
+
+| 开关 | 作用 |
+|---|---|
+| `--gemm --act N` | 走 GemmSplitMN；自动补 `PARAM3=0/PARAM10=N/PARAM18=2/BARRIER=1`；参考按 act 施加 silu/gelu |
+| `--precheck` | 同进程先跑 RMSNorm 正对照 |
+| `--blocks` | 块几何判别（N=192/256 单块、576 三块、64×64） |
+| `--find-gemm` | 限定模块的精确名查找（`O3NPU_FIND_MAX` 默认 8） |
+| `O3NPU_GEMM_{IN,W,OUT}_VA` | 覆盖 box 的 `ddr_va`，用于毒化实验（E4/E5） |
+| `timing launch_us=… sync_us=…` | 每条路径都打；`sync_us≈0` 是最强“未执行”信号 |

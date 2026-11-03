@@ -15,6 +15,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
+
+/* monotonic microseconds, used to tell "NPU was busy" from "nothing ran" */
+static uint64_t now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t) ts.tv_sec * 1000000ull + (uint64_t) ts.tv_nsec / 1000ull;
+}
 
 /* xnnl_shim.cpp */
 extern int  o3xnnl_open(void ** out, void * mida_device);
@@ -787,8 +795,10 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         fill_stripe_names(&lc);
 
         midaLaunchConfig * lcp = env_int("O3NPU_LC_NULL", 0) ? NULL : &lc;
+        uint64_t gt0 = now_us();
         rc = sub_exec ? a->stream_launch_subgraph_async(sub_exec, lcp, m->stream)
                       : a->stream_launch_graph_async(gexec, lcp, m->stream);
+        uint64_t gt1 = now_us();
         if (rc != 0) {
             snprintf(m->err, sizeof m->err, "graph launch -> %s", err_str(a, rc));
             if (a->graph_exec_destroy) a->graph_exec_destroy(gexec);
@@ -797,6 +807,9 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
         }
 
         rc = a->stream_sync(m->stream);
+        uint64_t gt2 = now_us();
+        printf("o3npu: timing(graph) launch_us=%llu sync_us=%llu\n",
+               (unsigned long long) (gt1 - gt0), (unsigned long long) (gt2 - gt1));
         if (rc != 0) {
             snprintf(m->err, sizeof m->err, "midaStreamSynchronize -> %s", err_str(a, rc));
             if (a->graph_exec_destroy) a->graph_exec_destroy(gexec);
@@ -899,7 +912,9 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     fill_stripe_names(&lc);
 
     midaLaunchConfig * lcp = env_int("O3NPU_LC_NULL", 0) ? NULL : &lc;
+    uint64_t t0 = now_us();
     rc = a->stream_launch_subgraph_async(exec, lcp, m->stream);
+    uint64_t t1 = now_us();
     if (rc != 0) {
         snprintf(m->err, sizeof m->err, "midaStreamLaunchSubgraphAsync -> %s", err_str(a, rc));
         a->sub_exec_destroy(exec);
@@ -908,6 +923,12 @@ int o3npu_matmul_run(o3npu_matmul_t * m, int K, int M, int T,
     }
 
     rc = a->stream_sync(m->stream);
+    uint64_t t2 = now_us();
+    /* launch_us = enqueue cost; sync_us = how long the NPU was actually busy.
+     * A sync_us of ~0 on a kernel that must do real work is the strongest
+     * available "the task was never dispatched" signal. */
+    printf("o3npu: timing launch_us=%llu sync_us=%llu\n",
+           (unsigned long long) (t1 - t0), (unsigned long long) (t2 - t1));
     if (rc != 0) {
         snprintf(m->err, sizeof m->err, "midaStreamSynchronize -> %s", err_str(a, rc));
         a->sub_exec_destroy(exec);
@@ -1005,11 +1026,14 @@ int o3npu_rmsnorm_test(int K, int trace) {
     lc.ddr_ratio = 1.0f;
     lc.fw_timeout = 10000;
     lc.name = "o3rms";
+    uint64_t t0 = now_us();
     rc = a->stream_launch_subgraph_async(ex, &lc, st);
     printf("rmsnorm launch -> %d\n", rc);
     if (rc == 0) {
         rc = a->stream_sync(st);
-        printf("rmsnorm sync -> %d (%s)\n", rc, err_str(a, rc));
+        uint64_t t1 = now_us();
+        printf("rmsnorm sync -> %d (%s) sync_us=%llu\n", rc, err_str(a, rc),
+               (unsigned long long) (t1 - t0));
     }
     if (rc == 0) {
         a->mem_cache_end(out.mem);
@@ -1259,20 +1283,84 @@ int o3npu_funcs(void) {
 int o3npu_gemm_name(void) {
     o3npu_matmul_t * m = o3npu_matmul_open();
     if (!m) { printf("open failed\n"); return -1; }
-    int K = env_int("O3NPU_NAME_K", 576);
     int M = env_int("O3NPU_NAME_M", 576);
     int T = env_int("O3NPU_NAME_T", 1);
-    int in_dims[4]  = { 1, 1, 1, K };
-    int w_dims[4]   = { 1, 1, K, M };
     int out_dims[4] = { T, 1, 1, M };
-    int act = env_int("O3NPU_GEMM_ACT", 5);
-    int allhead = env_int("O3NPU_GEMM_ALLHEAD", 1);
     int flags = env_int("O3NPU_GEMM_FLAGS", 0);
-    (void) in_dims; (void) w_dims;
-    int rc = o3xnnl_gemm_name(m->xnnl, out_dims, NULL, act, allhead, flags);
-    printf("gemm_name rc=%d act=%d allhead=%d flags=%d\n", rc, act, allhead, flags);
+    int last = -1;
+    if (getenv("O3NPU_GEMM_ACT") && *getenv("O3NPU_GEMM_ACT")) {
+        /* single request, e.g. O3NPU_GEMM_ACT=2 O3NPU_GEMM_ALLHEAD=0 */
+        int a = env_int("O3NPU_GEMM_ACT", 0);
+        int ah = env_int("O3NPU_GEMM_ALLHEAD", 0);
+        last = o3xnnl_gemm_name(m->xnnl, out_dims, NULL, a, ah, flags);
+    } else {
+        /* sweep the act modes that matter for MUL_MAT: 0 = plain GEMM (what a
+         * bare MUL_MAT needs), 5 = SiLU-fused, 6 = GELU, 7 = SwiGLU.  allhead
+         * picks the head-transpose variant.  This is read-only: it only
+         * resolves names, it does not touch the NPU. */
+        static const int acts[] = { 0, 5, 6, 7 };
+        for (size_t i = 0; i < sizeof acts / sizeof acts[0]; i++) {
+            for (int ah = 0; ah <= 1; ah++) {
+                int rc = o3xnnl_gemm_name(m->xnnl, out_dims, NULL, acts[i], ah, flags);
+                if (acts[i] == 0 && ah == 0) last = rc;
+            }
+        }
+    }
     o3npu_matmul_close(m);
-    return rc;
+    return last;
+}
+
+/* Bounded kernel lookup scan.  Unlike o3npu_funcs() this only asks two names
+ * per module and flushes after every line, so a hang is visible at the exact
+ * module that caused it.  O3NPU_FIND_MAX limits how many modules are touched
+ * (the full 66-module scan once wedged the device). */
+int o3npu_find_gemm(void) {
+    struct mida_api * a = mida_get();
+    if (!a || !a->module_load || !a->module_get_func) { printf("no module funcs\n"); return -1; }
+    void * xl = dlopen("/vendor/lib64/libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) xl = dlopen("libxnnl.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) { printf("dlopen libxnnl failed\n"); return -1; }
+    int (*cnt)(int *) = (int (*)(int *)) dlsym(xl, "xnnlGetDiscreteElfCount");
+    int (*nm)(unsigned int, char **) = (int (*)(unsigned int, char **)) dlsym(xl, "xnnlGetDiscreteElfName");
+    int (*dat)(unsigned int, void **) = (int (*)(unsigned int, void **)) dlsym(xl, "xnnlGetDiscreteElfData");
+    int (*sz)(unsigned int, size_t *) = (int (*)(unsigned int, size_t *)) dlsym(xl, "xnnlGetDiscreteElfSize");
+    if (!cnt || !nm || !dat || !sz) { printf("missing getters\n"); return -1; }
+
+    midaDeviceConfig cfg;
+    fill_devcfg(&cfg);
+    midaDevice_t dev = NULL;
+    int rc = a->device_get(&dev, 0, &cfg);
+    if (rc != 0 || !dev) { printf("device -> %d\n", rc); return -2; }
+
+    static const char * names[] = {
+        "gemmSplitMNEpilogueFusedKernel",
+        "gemmSplitMNEpilogueFusedWithSiluKernel",
+    };
+    int n = 0;
+    cnt(&n);
+    int lim = env_int("O3NPU_FIND_MAX", n);
+    if (lim > n) lim = n;
+    printf("find-gemm: %d modules, scanning %d\n", n, lim);
+    fflush(stdout);
+    int hits = 0;
+    for (int i = 0; i < lim; i++) {
+        char * mname = NULL; void * data = NULL; size_t size = 0;
+        nm((unsigned) i, &mname); dat((unsigned) i, &data); sz((unsigned) i, &size);
+        void * mod = NULL;
+        int lr = a->module_load(&mod, dev, data, (uint32_t) size);
+        printf("module[%02d] load=%d size=%zu name=%s\n", i, lr, size, mname ? mname : "?");
+        fflush(stdout);
+        if (lr != 0) continue;
+        for (size_t j = 0; j < sizeof names / sizeof names[0]; j++) {
+            void * fn = NULL;
+            int fr = a->module_get_func(&fn, mod, names[j]);
+            printf("  %-42s -> %d fn=%p\n", names[j], fr, fn);
+            fflush(stdout);
+            if (fr == 0) hits++;
+        }
+    }
+    printf("find-gemm: %d hits\n", hits);
+    return hits > 0 ? 0 : 1;
 }
 
 int o3npu_gemm_reorder_size(void) {

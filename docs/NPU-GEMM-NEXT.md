@@ -231,3 +231,64 @@ E0 仍失败
   `gemmSplitMNEpilogueFusedWithSiluKernel`，但输出仍为 0；
 - 原始记录：`artifacts/probe-logs/2026-11-01-gemm-arg-order/`；
 - 最终以“能否在第三方进程里拿到 `gemmSplitMNEpilogueFusedKernel` 的 fn 指针”为 Go/No-Go 判据。
+
+## 7. 2026-11-04 复盘：把 E5 重新定性为「任务是否被执行」，并给出判别实验包
+
+### 7.1 一个此前没写出的硬推断
+
+- **对拍语义错位**：probe 的 CPU 参考是纯 matmul（`tools/probe/probe_npu_matmul.cpp` 的 `cpu_ref`），
+  但 kernel 一直用 `actMode=5` 的 SiLU 融合核（照抄厂商 FFN 调用点）。参数顺序修复后，
+  `actMode=0`（与 MUL_MAT 语义一致的裸 GEMM）**一次都没跑过**——全部 probe 日志的
+  `kernel name` 都是 `gemmSplitMNEpilogueFusedWithSiluKernel`。
+- **更关键**：weight/output 的 TMA 维度与跨步都落在已分配缓冲区内
+  （logcat `global_strides:576,576`、out TMA 指向 `0x4f9000`）。**如果 kernel 真的执行，
+  即使权重是垃圾，输出也必被改写（哪怕是 NaN）**。实测是输出保持预填 `1.0` pattern，
+  且 11-03/11-04 全程**没有任何 `xr_dfx` / NPU 异常**（对比 matmul 路径那次吵闹的
+  `NPU_S_LOCKUP`）。两条合起来 ⇒ 主假设改为 **H-E：launch 返回成功，但任务没有被真正派发/执行**。
+- 在 H-E 之下，之前对 L2B / stack / DMASPLIT / CU 的 sweep 无效是必然的——它们都在给一个
+  **没有执行的 kernel** 调参数。
+
+### 7.2 判别实验包（`tools/probe/device-suite.sh`，一次解锁批量跑）
+
+| id | 实验 | 目的 | 正反结论 |
+|---|---|---|---|
+| E0 | `--ops` | 正对照：RMSNorm/unary 仍要通过 | 不通过则设备/root/策略退化，先修环境 |
+| E1 | `--gemm --act 0` | 裸 GEMM，参考=纯 matmul（MUL_MAT 语义） | OK ⇒ MUL_MAT 打通 |
+| E2 | `--gemm --act 5` | SiLU 融合核，参考=silu(matmul) | 仅 E2 OK ⇒ 裸核有问题，用 act=5 |
+| E3 | `--gemm --act 0 --precheck` | 同进程先 RMSNorm 再 GEMM | rmsnorm PASS 且 GEMM 不动 ⇒ 节点契约问题 |
+| E4 | `O3NPU_GEMM_W_VA=0x1` + act0 | 权重 VA 指向非法地址：固件是否真解引用 | rc=0 且输出不动 ⇒ H-E 成立 |
+| E5 | `O3NPU_GEMM_OUT_VA=0x1` + act0 | 输出 VA 非法：kernel 是否真写 | rc=0 且不动 ⇒ H-E 成立 |
+| E6 | `--gemm --act 0 --blocks` | 只改 block 数（blockN=256）：N=192/256 单块 vs 576 三块 | 仅单块写回 ⇒ multi-block/subgrid 派发 bug |
+| E7 | `O3NPU_XNNL_LIB=<CDN 库>` + act0 | 参数顺序修复后**从未复测**的 66-module CDN 库（MiMo 实际用它） | OK 且 E1 MISMATCH ⇒ 系统库内核版本不匹配 |
+| E8 | `--gemm-name` | 解析 act 0/5/6/7 × allhead 0/1 的 kernel 名（只读） | 名字必须与模块节名逐字一致 |
+| E9 | `--find-gemm` | 限定模块的 `midaModuleGetFunction` 扫描（`O3NPU_FIND_MAX` 默认 8，放最后） | 指到具体模块 idx；避免全模块扫描挂死 |
+
+脚本对每个实验单独 `logcat -c` / 抓 `logcat -d` / 抓 `dmesg`（过滤 npu/xr_dfx），
+汇总到 `artifacts/probe-logs/<stamp>-gemm-suite/RESULTS.md`；单个实验崩溃不影响其余。
+
+### 7.3 新增开关（已构建验证）
+
+- `probe_npu_matmul`：
+  - `--gemm`：自动补 `O3NPU_GEMM_PARAM3=0`、`PARAM10=<act>`、`PARAM18=2`、`BARRIER=1`
+    （环境里已有的值不覆盖）；
+  - `--act N`：参考值同步施加 SiLU(5)/GELU(6)，`act=0` 为纯 matmul；
+  - `--precheck`：同进程先跑 RMSNorm 正对照；
+  - `--blocks`：块几何判别（N=192/256 单块、576 三块、64×64 tiny）；
+  - `--find-gemm`：限定模块的精确名查找。
+- `o3npu.c`：subgraph/graph/rmsnorm 三条路径都打印
+  `timing launch_us=… sync_us=…`。**`sync_us` 接近 0 是“任务未执行”最强的量化信号**。
+- `xnnl_shim.cpp`：`O3NPU_GEMM_IN_VA / W_VA / OUT_VA` 覆盖 box 的 `ddr_va`（毒化实验）。
+- `--gemm-name` 扩展为遍历 act 0/5/6/7 × allhead 0/1。
+
+### 7.4 Go/No-Go 判据
+
+```
+E1 OK                          -> NPU MUL_MAT 打通，去接 ggml backend
+E1 MISMATCH 且 E2 OK           -> 只有裸 GEMM 坏，改用 act=5 + 前端 silu
+E3 rmsnorm PASS 且 gemm 不动   -> 节点契约，不是进程状态
+E4/E5 rc=0 且输出不动          -> H-E 成立：停止参数 sweep，
+                                  转去反编译 SubgraphExecImpl::Instantiate 的 IB（§18.6）
+E6 仅单 block 写回             -> multi-block/subgrid 派发问题
+E7 OK 且 E1 MISMATCH           -> 系统 libxnnl 内核与固件版本不匹配，改用 CDN libxnnl
+```
+

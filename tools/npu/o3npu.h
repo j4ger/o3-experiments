@@ -68,6 +68,16 @@ int o3npu_matmul_run(o3npu_matmul_t *m, int K, int M, int T,
 const char *o3npu_matmul_error(const o3npu_matmul_t *m);
 void o3npu_matmul_set_trace(int on);
 
+/* Probe entry points used by tools/probe/probe_npu_matmul.cpp. */
+int o3npu_rmsnorm_test(int K, int trace);
+int o3npu_limits(void);
+int o3npu_modules(void);
+int o3npu_funcs(void);
+int o3npu_gemm_name(void);
+int o3npu_gemm_reorder_size(void);
+int o3npu_find_gemm(void);
+int o3npu_unary_test(const char *name, int n, int trace);
+
 #ifdef __cplusplus
 }
 #endif

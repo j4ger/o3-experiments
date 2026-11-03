@@ -355,6 +355,25 @@ extern "C" int o3xnnl_gemm_splitmn(void * handle, void * subgraph,
     fill_box(&bi, in_dims, (void *) in_ptr);
     fill_box(&bw, w_dims, (void *) w_ptr);
     fill_box(&bo, out_dims, out_ptr);
+    /* One-shot VA overrides.  Point a box at a bogus address to find out
+     * whether the firmware actually dereferences the buffer: a real TMA read
+     * should fault or the driver should reject it, whereas a task that is
+     * silently dropped will still report launch/sync success. */
+    {
+        const char * e;
+        if ((e = getenv("O3NPU_GEMM_IN_VA")) && *e) {
+            bi.ddr_va = strtoull(e, nullptr, 0);
+            fprintf(stderr, "xnnl_shim: override in va=0x%llx\n", bi.ddr_va);
+        }
+        if ((e = getenv("O3NPU_GEMM_W_VA")) && *e) {
+            bw.ddr_va = strtoull(e, nullptr, 0);
+            fprintf(stderr, "xnnl_shim: override w va=0x%llx\n", bw.ddr_va);
+        }
+        if ((e = getenv("O3NPU_GEMM_OUT_VA")) && *e) {
+            bo.ddr_va = strtoull(e, nullptr, 0);
+            fprintf(stderr, "xnnl_shim: override out va=0x%llx\n", bo.ddr_va);
+        }
+    }
     (void) wscale; (void) nscale;
     int p3  = env_i("O3NPU_GEMM_PARAM3", 2);
     int p10 = env_i("O3NPU_GEMM_PARAM10", 5);
