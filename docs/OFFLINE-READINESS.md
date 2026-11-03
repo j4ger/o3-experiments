@@ -93,6 +93,31 @@ O3NPU_GEMM_SDP_CPU=1      # 把 CPU 指针（而不是设备 VA）传给 addGemm
 确认 192 字节 SDP 缓冲的内容以及 kernel 最终应该从哪里读它；
 否则即使图结构和 SDP 指针都对了，kernel 仍不写回。
 
+`xnnlSdpDataReorder`（Ghidra 0x657380）的实际约束：
+
+```c
+xnnlStatus xnnlSdpDataReorder(
+    float *dst_reordered,       // 不能为 NULL
+    xnnlEpilogueDescriptor *eplDesc, // 不能为 NULL
+    xnnlEpilogueParams *eplParams,   // 不能为 NULL，0x38 字节
+    uint32_t N,
+    uint32_t blkN);
+```
+
+流程是：
+
+```text
+xnnlSdpDataGenerate(&pack, eplDesc, eplParams)
+xnnlGetSdpReorderedSize(&size, eplDesc, N, blkN)
+memset(dst, 0, size << 2)
+sdpDataReorderWithoutSplit / WithSplit(dst, pack, N, [blkN])
+```
+
+这解释了为什么全零 `ep[0x38]` 能让 reorder 返回 0：它确实生成了 SDP 数据。
+下一步要确认的不是“reorder 是否成功”，而是 `addGemm` 的 `param_7`
+到底应该接 `sdp` 的**数据指针**还是 `sdp` 的 `xnnlTensorBox`，以及
+kernel 的 `WithSiluSdpKernel` 从哪里读取它。
+
 ## 3. L2B 参数结构（libxnumd 反汇编）
 
 ### `midaAllocFreeL2BNodeParams`（8 字节）
